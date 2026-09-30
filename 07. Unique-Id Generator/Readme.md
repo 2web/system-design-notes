@@ -1,100 +1,102 @@
-# Chapter 7: Design a Unique ID Generator in Distributed Systems
+**Русский** | [English](./Readme.en.md)
 
-## Introduction
-This chapter addresses the challenge of designing a **unique ID generator** for distributed systems. Traditional auto-increment keys are unsuitable in distributed environments due to scalability and synchronization challenges. The focus is on creating unique, sortable, 64-bit numerical IDs that meet the following requirements:
-- IDs must be **unique** and **ordered by date**.
-- IDs must fit within **64 bits**.
-- The system should generate **over 10,000 IDs per second**.
+# Глава 7. Проектирование генератора уникальных ID (Identifier — идентификатор) в распределённых системах
 
----
-
-## Step 1: Understanding the Problem
-### Basic Requirements
-- IDs must be unique and numerical and should fit in 64 bits.
-- IDs increment with time but not strictly by `+1`.
-- IDs should be sortable by date.
-- System must handle high throughput (10,000 IDs/sec).
+## Введение
+В этой главе рассматривается задача проектирования **генератора уникальных ID (unique ID generator)** для распределённых систем. Традиционные автоинкрементные ключи не подходят для распределённой среды из-за проблем с масштабированием и синхронизацией. Основная цель — генерировать уникальные сортируемые 64-битные числовые ID, удовлетворяющие следующим требованиям:
+- ID должны быть **уникальными** и **упорядоченными по дате**.
+- ID должны умещаться в **64 бита**.
+- Система должна генерировать **более 10 000 ID в секунду**.
 
 ---
 
-## Step 2: High-Level Design Options
-### 1. Multi-Master Replication
-- **Approach:** Use database `auto_increment` with step increments (e.g., `+k` for k servers).
+## Шаг 1. Понимание задачи
+### Базовые требования
+- ID должны быть уникальными, числовыми и умещаться в 64 бита.
+- ID растут со временем, но не обязательно строго на `+1`.
+- ID должны сортироваться по дате.
+- Система должна выдерживать высокую пропускную способность (10 000 ID/сек).
+
+---
+
+## Шаг 2. Варианты высокоуровневого дизайна
+### 1. Multi-master репликация
+- **Подход:** использовать `auto_increment` базы данных с шагом приращения (например, `+k` для k серверов).
 
     <p align="left">
-    <img src="./images/multi-master.png"  alt="Multi Master" width="400">
+    <img src="./images/multi-master.png"  alt="Multi-master" width="400">
     </p>
 
-- **Drawbacks:**
-  - Hard to scale across data centers.
-  - IDs do not always increase with time.
-  - Scaling issues when servers are added/removed.
+- **Недостатки:**
+  - Сложно масштабировать на несколько дата-центров.
+  - ID не всегда растут со временем.
+  - Проблемы с масштабированием при добавлении/удалении серверов.
 
-### 2. UUID (Universally Unique Identifier)
-- **Approach:** 
-    - Generate 128-bit unique identifiers independently on each server using UUID.
-    - UUIDs can be generated independently without coordination between servers
+### 2. UUID (Universally Unique Identifier, универсальный уникальный идентификатор)
+- **Подход:** 
+    - Генерировать 128-битные уникальные идентификаторы независимо на каждом сервере с помощью UUID.
+    - UUID можно генерировать независимо, без координации между серверами.
 
         <p align="left">
-        <img src="./images/uuid.png"  alt="UUID generator" width="600">
+        <img src="./images/uuid.png"  alt="Генератор UUID" width="600">
         </p>
 
-- **Advantages:**
-  - No coordination needed between servers.
-  - Scales easily with web servers.
-- **Drawbacks:**
-  - Exceeds 64-bit requirement.
-  - IDs are not sortable by time and may be non-numeric.
+- **Преимущества:**
+  - Не требуется координация между серверами.
+  - Легко масштабируется вместе с веб-серверами.
+- **Недостатки:**
+  - Превышает требование в 64 бита.
+  - ID не сортируются по времени и могут быть нечисловыми.
 
 
-### 3. Ticket Server
-- **Approach:** Use a centralized database server to increment and assign IDs.
+### 3. Ticket Server (сервер выдачи номеров)
+- **Подход:** использовать централизованный сервер базы данных, который увеличивает счётчик и выдаёт ID.
 
     <p align="left">
-    <img src="./images/ticket-server.png"  alt="UUID generator" width="500">
+    <img src="./images/ticket-server.png"  alt="Генератор UUID" width="500">
     </p>
 
-- **Advantages:**
-  - Simple to implement for small-scale systems.
-  - Generates numeric IDs.
-- **Drawbacks:**
-  - Single point of failure.
-  - Synchronization challenges in multi-server setups.
+- **Преимущества:**
+  - Прост в реализации для небольших систем.
+  - Генерирует числовые ID.
+- **Недостатки:**
+  - Единая точка отказа.
+  - Проблемы синхронизации в конфигурациях с несколькими серверами.
 
-### 4. Twitter Snowflake Approach
-- **Approach:** 
+### 4. Подход Twitter Snowflake
+- **Подход:** 
 
     <div style="margin-left:3rem">
-      <img src="./images/twitter-snowflake.png"  alt="Snowflake approach" width="500">
+      <img src="./images/twitter-snowflake.png"  alt="Подход Snowflake" width="500">
     </div>
     <div style="margin-left:3rem">
-      <img src="./images/snowflake-id-breakdown.png"  alt="Snowflake ID breakdow" width="500">
+      <img src="./images/snowflake-id-breakdown.png"  alt="Структура ID Snowflake" width="500">
     </div>
 
-    - Divide IDs into sections to ensure uniqueness and scalability.
-    - **Sign Bit (1 bit):** Always `0`, potentially distinguishing signed and unsigned numbers.
-    - **Timestamp (41 bits):** Milliseconds since a custom epoch (Twitter's default is `1288834974657`, equivalent to Nov 04, 2010, 01:42:54 UTC). Ensures IDs are time-ordered.
-    - **Datacenter ID (5 bits):** Identifies up to `2^5 = 32` datacenters.
-    - **Machine ID (5 bits):** Identifies up to `2^5 = 32` machines within each datacenter.
-    - **Sequence Number (12 bits):** Tracks IDs generated on a machine within the same millisecond, supporting up to `2^12 = 4096` IDs per millisecond. The sequence resets to `0` every millisecond.
+    - ID делится на секции, что обеспечивает уникальность и масштабируемость.
+    - **Бит знака (1 бит):** всегда `0`; может использоваться для различения знаковых и беззнаковых чисел.
+    - **Временная метка (41 бит):** миллисекунды с момента заданной эпохи (по умолчанию в Twitter — `1288834974657`, что соответствует 04 ноября 2010 г., 01:42:54 UTC — Coordinated Universal Time, всемирное координированное время). Обеспечивает упорядоченность ID по времени.
+    - **ID дата-центра (5 бит):** позволяет идентифицировать до `2^5 = 32` дата-центров.
+    - **ID машины (5 бит):** позволяет идентифицировать до `2^5 = 32` машин в каждом дата-центре.
+    - **Порядковый номер (12 бит):** нумерует ID, сгенерированные на машине в течение одной миллисекунды, — до `2^12 = 4096` ID в миллисекунду. Порядковый номер сбрасывается в `0` каждую миллисекунду.
 
 
 
-- **Advantages:**
-    - **Scalability:** Handles 10,000+ IDs per second across multiple servers.
-    - **Time-Order:** Ensures IDs are sortable by time.
-    - **Decentralization:** No single point of failure.
+- **Преимущества:**
+    - **Масштабируемость:** более 10 000 ID в секунду на нескольких серверах.
+    - **Упорядоченность по времени:** ID сортируются по времени.
+    - **Децентрализация:** нет единой точки отказа.
 
 
-## Step 4: Additional Considerations
-### 1. Clock Synchronization
-- **Challenge:** ID generation assumes synchronized clocks across servers.
-- **Solution:** Use **Network Time Protocol (NTP)** to minimize drift.
+## Шаг 4. Дополнительные аспекты
+### 1. Синхронизация часов
+- **Проблема:** генерация ID предполагает, что часы на серверах синхронизированы.
+- **Решение:** использовать **Network Time Protocol (NTP)**, чтобы минимизировать расхождение часов.
 
-### 2. Section Length Tuning
-- Adjust section sizes (e.g., fewer sequence bits, more timestamp bits) based on use case.
+### 2. Настройка длины секций
+- Размеры секций можно настраивать под конкретный сценарий (например, меньше битов на порядковый номер и больше на временную метку).
 
-### 3. High Availability
-- ID generators are mission-critical and must be fault-tolerant.
-- Consider redundancy and failover mechanisms.
+### 3. Высокая доступность
+- Генераторы ID критически важны для работы системы и должны быть отказоустойчивыми.
+- Предусмотрите резервирование и механизмы автоматического переключения (failover).
 

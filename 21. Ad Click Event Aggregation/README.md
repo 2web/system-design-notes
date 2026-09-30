@@ -1,120 +1,122 @@
-# Chapter 21: Ad Click Event Aggregation
+**Русский** | [English](./README.en.md)
 
-## Introduction
-**Digital advertising** is a big industry with the rise of Facebook, YouTube, TikTok, etc.
+# Глава 21: Агрегация событий кликов по рекламе
 
-Hence, tracking ad click events is important. In this chapter, we explore how to design an **ad click event aggregation** system at Facebook/Google scale.
+## Введение
+**Цифровая реклама** — огромная индустрия, особенно с появлением Facebook, YouTube, TikTok и т. д.
 
-Digital advertising has a process called **real-time bidding (RTB)**, where digital advertising inventory is bought and sold:
+Поэтому отслеживание событий кликов по рекламе очень важно. В этой главе разберём, как спроектировать систему **агрегации событий кликов по рекламе (ad click event aggregation)** в масштабах Facebook/Google.
+
+В цифровой рекламе есть процесс, называемый **аукционом в реальном времени (real-time bidding, RTB)**, в ходе которого покупается и продаётся рекламный инвентарь:
 
 <div style="margin-left:3rem">
-    <img src="./images/digital-advertising-example.png" alt="digital-advertising-example" width="500" />
+    <img src="./images/digital-advertising-example.png" alt="пример цифровой рекламы" width="500" />
 </div>
 
-Speed of RTB is important as it usually occurs within a second.
-Data accuracy is also very important as it impacts how much money advertisers pay.
+Скорость RTB критична, поскольку аукцион обычно проходит менее чем за секунду.
+Точность данных также очень важна, так как от неё зависит, сколько денег платят рекламодатели.
 
-Based on ad click event aggregations, advertisers can make decisions such as adjust target audience and keywords.
-
----
-
-## Step 1: Understand the Problem and Establish Design Scope
- - C: What is the format of the input data?
- - I: 1bil ad clicks per day and 2mil ads in total. Number of ad-click events grows 30% year-over-year.
- - C: What are some of the most important queries our system needs to support?
- - I: Top queries to take into consideration:
-   - Return number of click events for ad X in last Y minutes
-   - Return top 100 most clicked ads in the past 1min. Both parameters should be configurable. Aggregation occurs every minute.
-   - Support data filtering by `ip`, `user_id`, `country` for the above queries
- - C: Do we need to worry about edge cases? Some of the ones I can think of:
-   - There might be events that arrive later than expected
-   - There might be duplicate events
-   - Different parts of the system might be down, so we need to consider system recovery
- - I: That's a good list, take those into consideration
- - C: What is the latency requirement?
- - I: A few minutes of e2e latency for ad click aggregation. For RTB, it is less than a second. It is ok to have that latency for ad click aggregation as those are usually used for billing and reporting.
-
-### **Functional requirements**
- - Aggregate the number of clicks of `ad_id` in the last Y minutes
- - Return top 100 most clicked `ad_id` every minute
- - Support aggregation filtering by different attributes
- - Dataset volume is at Facebook or Google scale
-
-### **Non-functional requirements**
- - Correctness of the aggregation result is important as it's used for RTB and ads billing
- - Properly handle delayed or duplicate events
- - Robustness - system should be resilient to partial failures
- - Latency - a few minutes of e2e latency at most
-
-### **Back-of-the-envelope estimation**
- - 1bil DAU
- - Assuming user clicks 1 ad per day -> 1bil ad clicks per day
- - Ad click QPS = 10,000
- - Peak QPS is 5 times the number = 50,000
- - A single ad click occupies 0.1KB storage. Daily storage requirement is 100gb
- - Monthly storage = 3tb
+На основе агрегированных событий кликов рекламодатели могут принимать решения, например корректировать целевую аудиторию и ключевые слова.
 
 ---
 
-## Step 2: Propose High-Level Design and Get Buy-In
-In this section, we discuss query API design, data model and high-level design.
+## Шаг 1: Понять задачу и определить рамки проектирования
+ - К: Каков формат входных данных?
+ - И: 1 млрд кликов по рекламе в день и всего 2 млн объявлений. Количество событий кликов растёт на 30% в год.
+ - К: Какие запросы наиболее важны для нашей системы?
+ - И: Основные запросы, которые нужно учесть:
+   - Вернуть количество событий кликов по объявлению X за последние Y минут
+   - Вернуть топ-100 объявлений с наибольшим числом кликов за последнюю минуту. Оба параметра должны быть настраиваемыми. Агрегация выполняется каждую минуту.
+   - Поддержать фильтрацию данных по `ip`, `user_id`, `country` для указанных выше запросов
+ - К: Нужно ли учитывать граничные случаи? Вот некоторые, что приходят в голову:
+   - Могут быть события, которые приходят позже ожидаемого
+   - Могут быть дублирующиеся события
+   - Разные части системы могут отказывать, поэтому нужно продумать восстановление системы
+ - И: Хороший список, учтите всё это
+ - К: Каковы требования к задержке?
+ - И: Для агрегации кликов допустима сквозная (e2e, end-to-end — от начала до конца) задержка в несколько минут. Для RTB — менее секунды. Для агрегации кликов такая задержка приемлема, поскольку результаты обычно используются для биллинга и отчётности.
 
-### **Query API Design**
-The API is a contract between the client and the server. In our case, the client is the dashboard user - data scientist/analyst, advertiser, etc.
+### **Функциональные требования**
+ - Агрегировать количество кликов по `ad_id` за последние Y минут
+ - Каждую минуту возвращать топ-100 `ad_id` с наибольшим числом кликов
+ - Поддерживать фильтрацию агрегатов по различным атрибутам
+ - Объём данных — на уровне Facebook или Google
 
-Here's our functional requirements:
- - Aggregate the number of clicks of `ad_id` in the last Y minutes
- - Return top N most clicked `ad_id` in the last M minutes
- - Support aggregation filtering by different attributes
+### **Нефункциональные требования**
+ - Корректность результатов агрегации важна, поскольку они используются для RTB и биллинга рекламы
+ - Корректная обработка запоздавших и дублирующихся событий
+ - Надёжность (robustness) — система должна быть устойчива к частичным отказам
+ - Задержка — не более нескольких минут сквозной задержки
 
-We need two endpoints to achieve those requirements. Filtering can be done via query parameters on one of them.
+### **Оценка «на салфетке» (back-of-the-envelope estimation)**
+ - 1 млрд DAU (Daily Active Users — уникальных активных пользователей в день)
+ - Предположим, что пользователь кликает по 1 объявлению в день -> 1 млрд кликов в день
+ - QPS (Queries Per Second — запросов в секунду) кликов по рекламе = 10 000
+ - Пиковый QPS в 5 раз больше = 50 000
+ - Один клик занимает 0,1 КБ хранилища. Ежедневная потребность в хранилище — 100 ГБ
+ - Ежемесячно — 3 ТБ
 
-**Aggregate number of clicks of ad_id in the last M minutes**:
+---
+
+## Шаг 2: Предложить высокоуровневый дизайн и получить одобрение
+В этом разделе обсудим дизайн API (Application Programming Interface — программный интерфейс) запросов, модель данных и высокоуровневый дизайн.
+
+### **Дизайн API запросов**
+API — это контракт между клиентом и сервером. В нашем случае клиент — пользователь дашборда: data scientist/аналитик, рекламодатель и т. д.
+
+Наши функциональные требования:
+ - Агрегировать количество кликов по `ad_id` за последние Y минут
+ - Возвращать топ-N `ad_id` с наибольшим числом кликов за последние M минут
+ - Поддерживать фильтрацию агрегатов по различным атрибутам
+
+Для выполнения этих требований нам нужны два эндпоинта. Фильтрацию можно реализовать через параметры запроса в одном из них.
+
+**Агрегированное количество кликов по ad_id за последние M минут**:
 
 ```
 GET /v1/ads/{:ad_id}/aggregated_count
 ```
 
-Query parameters:
- - from - start minute. Default is now - 1 min
- - to - end minute. Default is now
- - filter - identifier for different filtering strategies. Eg 001 means "non-US clicks".
+Параметры запроса:
+ - from — начальная минута. По умолчанию — now - 1 мин
+ - to — конечная минута. По умолчанию — now
+ - filter — идентификатор стратегии фильтрации. Например, 001 означает «клики не из США».
 
-Response:
- - ad_id - ad identifier
- - count - aggregated count between start and end minutes
+Ответ:
+ - ad_id — идентификатор объявления
+ - count — агрегированное количество между начальной и конечной минутами
 
-**Return top N most clicked ad_ids in the last M minutes**
+**Топ-N ad_id с наибольшим числом кликов за последние M минут**
 
 ```
 GET /v1/ads/popular_ads
 ```
 
-Query parameters:
- - count - top N most clicked ads
- - window - aggregation window size in minutes
- - filter - identifier for different filtering strategies
+Параметры запроса:
+ - count — N самых кликаемых объявлений
+ - window — размер окна агрегации в минутах
+ - filter — идентификатор стратегии фильтрации
 
-Response:
- - list of ad_ids
+Ответ:
+ - список ad_id
 
-### **Data model**
-In our system, we have raw and aggregated data.
+### **Модель данных**
+В нашей системе есть сырые и агрегированные данные.
 
-Raw data looks like this:
+Сырые данные выглядят так:
 
 ```
 [AdClickEvent] ad001, 2021-01-01 00:00:01, user 1, 207.148.22.22, USA
 ```
 
-Here's an example in a structured format:
+Вот пример в структурированном виде:
 | ad_id | click_timestamp     | user  | ip            | country |
 |-------|---------------------|-------|---------------|---------|
 | ad001 | 2021-01-01 00:00:01 | user1 | 207.148.22.22 | USA     |
 | ad001 | 2021-01-01 00:00:02 | user1 | 207.148.22.22 | USA     |
 | ad002 | 2021-01-01 00:00:02 | user2 | 209.153.56.11 | USA     |
 
-Here's the aggregated version:
+А вот агрегированная версия:
 | ad_id | click_minute | filter_id | count |
 |-------|--------------|-----------|-------|
 | ad001 | 202101010000 | 0012      | 2     |
@@ -122,141 +124,141 @@ Here's the aggregated version:
 | ad001 | 202101010001 | 0012      | 1     |
 | ad001 | 202101010001 | 0023      | 6     |
 
-The `filter_id` helps us achieve our filtering requirements.
+`filter_id` помогает нам выполнить требования к фильтрации.
 | filter_id | region | IP        | user_id |
 |-----------|--------|-----------|---------|
 | 0012      | US     | *         | *       |
 | 0013      | *      | 123.1.2.3 | *       |
 
-To support quickly returning top N most clicked ads in the last M minutes, we'll also maintain this structure:
+Чтобы быстро возвращать топ-N самых кликаемых объявлений за последние M минут, мы также будем поддерживать такую структуру:
 | most_clicked_ads   |           |                                                  |
 |--------------------|-----------|--------------------------------------------------|
-| window_size        | integer   | The aggregation window size (M) in minutes       |
-| update_time_minute | timestamp | Last updated timestamp (in 1-minute granularity) |
-| most_clicked_ads   | array     | List of ad IDs in JSON format.                   |
+| window_size        | integer   | Размер окна агрегации (M) в минутах              |
+| update_time_minute | timestamp | Время последнего обновления (с точностью до минуты) |
+| most_clicked_ads   | array     | Список ID (Identifier — идентификатор) объявлений в формате JSON (JavaScript Object Notation — текстовый формат обмена данными).             |
 
-What are some pros and cons between storing raw data and storing aggregated data?
- - Raw data enables using the full data set and supports data filtering and recalculation
- - On the other hand, aggregated data allows us to have a smaller data set and a faster query
- - Raw data means having a larger data store and a slower query
- - Aggregated data, however, is derived data, hence there is some data loss.
+Каковы плюсы и минусы хранения сырых данных по сравнению с агрегированными?
+ - Сырые данные позволяют использовать полный набор данных и поддерживают фильтрацию и пересчёт
+ - С другой стороны, агрегированные данные дают меньший объём и более быстрые запросы
+ - Сырые данные означают больший объём хранилища и более медленные запросы
+ - Агрегированные данные, однако, являются производными, поэтому часть информации теряется.
 
-In our design, we'll use a combination of both approaches:
- - It's a good idea to keep the raw data around for debugging. If there is some bug in aggregation, we can discover the bug and backfill.
- - Aggregated data should be stored as well for faster query performance.
- - Raw data can be stored in cold storage to avoid extra storage costs.
+В нашем дизайне мы будем использовать комбинацию обоих подходов:
+ - Сырые данные полезно хранить для отладки. Если в агрегации найдётся баг, мы сможем его обнаружить и выполнить дозаполнение (backfill).
+ - Агрегированные данные тоже нужно хранить для более быстрого выполнения запросов.
+ - Сырые данные можно держать в холодном хранилище (cold storage), чтобы избежать лишних затрат.
 
-When it comes to the database, there are several factors to take into consideration:
- - What does the data look like? Is it relational, document or blob?
- - Is the workload read-heavy, write-heavy or both?
- - Are transactions needed?
- - Do the queries rely on OLAP functions like SUM and COUNT?
+При выборе базы данных нужно учитывать несколько факторов:
+ - Как выглядят данные? Они реляционные, документные или blob?
+ - Нагрузка преимущественно на чтение, на запись или и то и другое?
+ - Нужны ли транзакции?
+ - Опираются ли запросы на OLAP-функции (Online Analytical Processing — аналитическая обработка данных) вроде SUM и COUNT?
 
-For the raw data, we can see that the average QPS is 10k and peak QPS is 50k, so the system is write-heavy.
-On the other hand, read traffic is low as raw data is mostly used as backup if anything goes wrong.
+Для сырых данных средний QPS составляет 10 тыс., а пиковый — 50 тыс., поэтому нагрузка преимущественно на запись.
+С другой стороны, трафик на чтение невелик, поскольку сырые данные в основном используются как резервная копия на случай проблем.
 
-Relational databases can do the job, but it can be challenging to scale the writes. 
-Alternatively, we can use Cassandra or InfluxDB which have better native support for heavy write loads.
+Реляционные базы данных справятся с задачей, но масштабировать запись может быть непросто.
+Как альтернативу можно использовать Cassandra или InfluxDB, у которых лучше нативная поддержка высокой нагрузки на запись.
 
-Another option is to use Amazon S3 with a columnar data format like ORC, Parquet or AVRO. Since this setup is unfamiliar, we'll stick to Cassandra.
+Другой вариант — Amazon S3 (Simple Storage Service — облачное объектное хранилище Amazon) с колоночным форматом данных, например ORC (Optimized Row Columnar — оптимизированный колоночный формат), Parquet или AVRO. Поскольку такая конфигурация менее привычна, остановимся на Cassandra.
 
-For aggregated data, the workload is both read and write heavy as aggregated data is constantly queried for dashboards and alerts.
-It is also write-heavy as data is aggregated and written every minute by the aggregation service. 
-Hence, we'll use the same data store (Cassandra) here as well.
+Для агрегированных данных высока нагрузка как на чтение, так и на запись: агрегированные данные постоянно запрашиваются дашбордами и системами алертинга.
+Нагрузка на запись тоже высокая, поскольку сервис агрегации каждую минуту агрегирует и записывает данные.
+Поэтому и здесь мы используем то же хранилище (Cassandra).
 
-### **High-level design**
-Here's how our system looks like:
-
-<div style="margin-left:3rem">
-    <img src="./images/high-level-design-1.png" alt="high-level-design-1" width="500" />
-</div>
-
-Data flows as an unbounded data stream on both inputs and outputs.
-
-In order to avoid having a synchronous sink, where a consumer crashing can cause the whole system to stall, 
-we'll leverage asynchronous processing using message queues (Kafka) to decouple consumers and producers.
+### **Высокоуровневый дизайн**
+Вот как выглядит наша система:
 
 <div style="margin-left:3rem">
-    <img src="./images/high-level-design-2.png" alt="high-level-design-2" width="500" />
+    <img src="./images/high-level-design-1.png" alt="высокоуровневый дизайн 1" width="500" />
 </div>
 
-The first message queue stores ad click event data:
+Данные как на входе, так и на выходе представляют собой неограниченный поток (unbounded data stream).
+
+Чтобы избежать синхронного приёмника (sink), при котором падение потребителя может остановить всю систему,
+мы используем асинхронную обработку с очередями сообщений (Kafka), чтобы развязать потребителей и производителей.
+
+<div style="margin-left:3rem">
+    <img src="./images/high-level-design-2.png" alt="высокоуровневый дизайн 2" width="500" />
+</div>
+
+Первая очередь сообщений хранит данные о событиях кликов:
 | ad_id | click_timestamp | user_id | ip | country |
 |-------|-----------------|---------|----|---------|
 
-The second message queue contains ad click counts, aggregated per-minute:
+Вторая очередь сообщений содержит количество кликов, агрегированное поминутно:
 | ad_id | click_minute | count |
 |-------|--------------|-------|
 
-As well as top N clicked ads aggregated per minute:
+А также топ-N самых кликаемых объявлений, агрегированный поминутно:
 | update_time_minute | most_clicked_ads |
 |--------------------|------------------|
 
-The second message queue is there in order to achieve end to end exactly-once atomic commit semantics:
+Вторая очередь сообщений нужна для обеспечения сквозной семантики атомарного коммита exactly-once:
 
 <div style="margin-left:3rem">
-    <img src="./images/atomic-commit.png" alt="atomic-commit" width="500" />
+    <img src="./images/atomic-commit.png" alt="атомарный коммит" width="500" />
 </div>
 
-For the aggregation service, using the MapReduce framework is a good option:
+Для сервиса агрегации хорошим вариантом будет фреймворк MapReduce:
 
 <div style="margin-left:3rem">
-    <img src="./images/ad-count-map-reduce.png" alt="ad-count-map-reduce" width="500" />
+    <img src="./images/ad-count-map-reduce.png" alt="MapReduce для подсчёта кликов по объявлениям" width="500" />
 </div>
 
 <div style="margin-left:3rem">
-    <img src="./images/top-100-map-reduce.png" alt="top-100-map-reduce" width="500" />
+    <img src="./images/top-100-map-reduce.png" alt="MapReduce для топ-100" width="500" />
 </div>
 
-Each node is responsible for one single task and it sends the processing result to the downstream node.
+Каждый узел отвечает за одну задачу и отправляет результат обработки нижестоящему (downstream) узлу.
 
-The map node is responsible for reading from the data source, then filtering and transforming the data.
+Map-узел отвечает за чтение из источника данных, а затем за фильтрацию и преобразование данных.
 
-For example, the map node can allocate data across different aggregation nodes based on the `ad_id`:
+Например, map-узел может распределять данные по разным узлам агрегации на основе `ad_id`:
 
 <div style="margin-left:3rem">
-    <img src="./images/map-node.png" alt="map-node" width="500" />
+    <img src="./images/map-node.png" alt="map-узел" width="500" />
 </div>
 
-Alternatively, we can distribute ads across Kafka partitions and let the aggregation nodes subscribe directly within a consumer group.
-However, the mapping node enables us to sanitize or transform the data before subsequent processing.
+Как вариант, можно распределить объявления по партициям Kafka и позволить узлам агрегации подписываться напрямую в рамках группы потребителей (consumer group).
+Однако map-узел позволяет очищать или преобразовывать данные перед дальнейшей обработкой.
 
-Another reason might be that we don't have control over how data is produced, 
-so events related to the same `ad_id` might go on different partitions.
+Ещё одна причина — у нас может не быть контроля над тем, как производятся данные,
+поэтому события, относящиеся к одному `ad_id`, могут попадать в разные партиции.
 
-The aggregate node counts ad click events by `ad_id` in-memory every minute.
+Aggregate-узел каждую минуту подсчитывает события кликов по `ad_id` в памяти.
 
-The reduce node collects aggregated results from aggregate node and produces the final result:
+Reduce-узел собирает агрегированные результаты от aggregate-узлов и формирует итоговый результат:
 
 <div style="margin-left:3rem">
-    <img src="./images/reduce-node.png" alt="reduce-node" width="500" />
+    <img src="./images/reduce-node.png" alt="reduce-узел" width="500" />
 </div>
 
-This DAG model uses the MapReduce paradigm. It takes big data and leverages parallel distributed computing to turn it into regular-sized data.
+Эта DAG-модель (Directed Acyclic Graph — направленный ациклический граф) использует парадигму MapReduce. Она берёт большие данные и с помощью параллельных распределённых вычислений превращает их в данные обычного размера.
 
-In the DAG model, intermediate data is stored in-memory and different nodes communicate with each other using TCP or shared memory.
+В DAG-модели промежуточные данные хранятся в памяти, а узлы общаются между собой через TCP (Transmission Control Protocol — протокол надёжной передачи данных) или разделяемую память.
 
-Let's explore how this model can now help us to achieve our various use-cases.
+Посмотрим, как эта модель помогает реализовать наши сценарии использования.
 
-**Use-case 1 - aggregate the number of clicks**:
+**Сценарий 1 — агрегация количества кликов**:
 
 <div style="margin-left:3rem">
-    <img src="./images/use-case-1.png" alt="use-case-1" width="500" />
+    <img src="./images/use-case-1.png" alt="сценарий 1" width="500" />
 </div>
 
- - Ads are partitioned using `ad_id % 3`
+ - Объявления партиционируются по `ad_id % 3`
 
-**Use-case 2 - return top N most clicked ads**:
+**Сценарий 2 — возврат топ-N самых кликаемых объявлений**:
 
 <div style="margin-left:3rem">
-    <img src="./images/use-case-2.png" alt="use-case-2" width="500" />
+    <img src="./images/use-case-2.png" alt="сценарий 2" width="500" />
 </div>
 
- - In this case, we're aggregating the top 3 ads, but this can be extended to top N ads easily
- - Each node maintains a heap data structure for fast retrieval of top N ads
+ - В данном случае мы агрегируем топ-3 объявления, но это легко расширить до топ-N
+ - Каждый узел поддерживает кучу (heap) для быстрого получения топ-N объявлений
 
-**Use-case 3 - data filtering**:
-To support fast data filtering, we can predefine filtering criterias and pre-aggregate based on it:
+**Сценарий 3 — фильтрация данных**:
+Для быстрой фильтрации можно заранее определить критерии фильтрации и выполнять предварительную агрегацию по ним:
 | ad_id | click_minute | country | count |
 |-------|--------------|---------|-------|
 | ad001 | 202101010001 | USA     | 100   |
@@ -266,284 +268,284 @@ To support fast data filtering, we can predefine filtering criterias and pre-agg
 | ad002 | 202101010001 | GPB     | 25    |
 | ad002 | 202101010001 | others  | 12    |
 
-This technique is called the **star schema** and is widely used in data warehouses.
-The filtering fields are called **dimensions**.
+Этот приём называется **схемой «звезда» (star schema)** и широко используется в хранилищах данных.
+Поля фильтрации называются **измерениями (dimensions)**.
 
-This approach has the following benefits:
- - Simple to undertand and build
- - Current aggregation service can be reused to create more dimensions in the star schema.
- - Accessing data based on filtering criteria is fast as results are pre-calculated
+У этого подхода есть следующие преимущества:
+ - Его просто понять и реализовать
+ - Текущий сервис агрегации можно переиспользовать для создания дополнительных измерений в схеме «звезда».
+ - Доступ к данным по критериям фильтрации быстрый, поскольку результаты рассчитаны заранее
 
-A limitation of this approach is that it creates many more buckets and records, especially when we have lots of filtering criterias.
+Ограничение подхода в том, что он создаёт гораздо больше бакетов и записей, особенно при большом количестве критериев фильтрации.
 
 ---
 
-## Step 3: Design Deep Dive
-Let's dive deeper into some of the more interesting topics.
+## Шаг 3: Детальная проработка дизайна
+Углубимся в некоторые наиболее интересные темы.
 
-### **Streaming vs. Batching**
-The high-level architecture we proposed is a type of stream processing system. 
-Here's a comparison between three types of systems:
-|                         | Services (Online system)      | Batch system (offline system)                          | Streaming system (near real-time system)     |
+### **Потоковая vs. пакетная обработка**
+Предложенная нами высокоуровневая архитектура — это разновидность системы потоковой обработки (stream processing).
+Вот сравнение трёх типов систем:
+|                         | Сервисы (онлайн-система)      | Пакетная система (офлайн-система)                      | Потоковая система (система, близкая к реальному времени) |
 |-------------------------|-------------------------------|--------------------------------------------------------|----------------------------------------------|
-| Responsiveness          | Respond to the client quickly | No response to the client needed                       | No response to the client needed             |
-| Input                   | User requests                 | Bounded input with finite size. A large amount of data | Input has no boundary (infinite streams)     |
-| Output                  | Responses to clients          | Materialized views, aggregated metrics, etc.           | Materialized views, aggregated metrics, etc. |
-| Performance measurement | Availability, latency         | Throughput                                             | Throughput, latency                          |
-| Example                 | Online shopping               | MapReduce                                              | Flink [13]                                   |
+| Отзывчивость            | Быстро отвечает клиенту       | Ответ клиенту не требуется                             | Ответ клиенту не требуется                   |
+| Вход                    | Запросы пользователей         | Ограниченный вход конечного размера. Большой объём данных | Вход не ограничен (бесконечные потоки)    |
+| Выход                   | Ответы клиентам               | Материализованные представления, агрегированные метрики и т. д. | Материализованные представления, агрегированные метрики и т. д. |
+| Измерение производительности | Доступность, задержка    | Пропускная способность                                 | Пропускная способность, задержка             |
+| Пример                  | Онлайн-шопинг                 | MapReduce                                              | Flink [13]                                   |
 
-In our design, we used a mixture of batching and streaming. 
+В нашем дизайне используется сочетание пакетной и потоковой обработки.
 
-We used streaming for processing data as it arrives and generates aggregated results in near real-time.
-We used batching, on the other hand, for historical data backup.
+Потоковую обработку мы используем для обработки данных по мере поступления и формирования агрегированных результатов почти в реальном времени.
+Пакетную обработку, в свою очередь, — для резервного копирования исторических данных.
 
-A system which contains two processing paths - batch and streaming, simultaneously, this architecture is called lambda.
-A disadvantage is that you have two processing paths with two different codebases to maintain.
+Архитектура системы, которая одновременно содержит два пути обработки — пакетный и потоковый, — называется lambda.
+Её недостаток в том, что приходится поддерживать два пути обработки с двумя разными кодовыми базами.
 
-Kappa is an alternative architecture, which combines batch and stream processing in one processing path.
-The key idea is to use a single stream processing engine.
+Kappa — альтернативная архитектура, объединяющая пакетную и потоковую обработку в один путь.
+Ключевая идея — использовать единый движок потоковой обработки.
 
-Lambda architecture:
-
-<div style="margin-left:3rem">
-    <img src="./images/lambda-architecture.png" alt="lambda-architecture" width="500" />
-</div>
-
-Kappa architecture:
+Архитектура lambda:
 
 <div style="margin-left:3rem">
-    <img src="./images/kappa-architecture.png" alt="kappa-architecture" width="500" />
+    <img src="./images/lambda-architecture.png" alt="архитектура lambda" width="500" />
 </div>
 
-Our high-level design uses Kappa architecture as reprocessing of historical data also goes through the aggregation service.
-
-Whenever we have to recalculate aggregated data due to eg a major bug in aggregation logic, we can recalculate the aggregation from the raw data we store.
- - Recalculation service retrieves data from raw storage. This is a batch job.
- - Retrieved data is sent to a dedicated aggregation service, so that the real-time processing aggregation service is not impacted.
- - Aggregated results are sent to the second message queue, after which we update the results in the aggregation database.
+Архитектура kappa:
 
 <div style="margin-left:3rem">
-    <img src="./images/recalculation-example.png" alt="recalculation-example" width="500" />
+    <img src="./images/kappa-architecture.png" alt="архитектура kappa" width="500" />
 </div>
 
-### **Time**
-We need a timestamp to perform aggregation. It can be generated in two places:
- - event time - when ad click occurs
- - Processing time - system time when the server processes the event
+Наш высокоуровневый дизайн использует архитектуру kappa, поскольку повторная обработка исторических данных тоже проходит через сервис агрегации.
 
-Due to the usage of async processing (message queues) and network delays, there can be significant difference between event time and processing time.
- - If we use processing time, aggregation results can be inaccurate
- - If we use event time, we have to deal with delayed events
+Когда нужно пересчитать агрегированные данные, например из-за серьёзного бага в логике агрегации, мы можем пересчитать агрегаты из сохранённых сырых данных.
+ - Сервис пересчёта извлекает данные из хранилища сырых данных. Это пакетное задание (batch job).
+ - Извлечённые данные отправляются в выделенный сервис агрегации, чтобы не влиять на сервис агрегации, работающий в реальном времени.
+ - Агрегированные результаты отправляются во вторую очередь сообщений, после чего мы обновляем результаты в базе агрегированных данных.
 
-There is no perfect solution, we need to consider trade-offs:
-|                 | Pros                                  | Cons                                                                                 |
+<div style="margin-left:3rem">
+    <img src="./images/recalculation-example.png" alt="пример пересчёта" width="500" />
+</div>
+
+### **Время**
+Для агрегации нужна временная метка. Её можно сгенерировать в двух местах:
+ - время события (event time) — когда произошёл клик по объявлению
+ - время обработки (processing time) — системное время, когда сервер обрабатывает событие
+
+Из-за асинхронной обработки (очереди сообщений) и сетевых задержек разница между временем события и временем обработки может быть значительной.
+ - Если использовать время обработки, результаты агрегации могут быть неточными
+ - Если использовать время события, придётся иметь дело с запоздавшими событиями
+
+Идеального решения нет, нужно учитывать компромиссы:
+|                 | Плюсы                                 | Минусы                                                                               |
 |-----------------|---------------------------------------|--------------------------------------------------------------------------------------|
-| Event time      | Aggregation results are more accurate | Clients might have the wrong time or timestamp might be generated by malicious users |
-| Processing time | Server timestamp is more reliable     | The timestamp is not accurate if event is late                                       |
+| Время события   | Результаты агрегации точнее           | У клиентов может быть неверное время, либо временную метку могут подделать злоумышленники |
+| Время обработки | Серверная временная метка надёжнее    | Временная метка неточна, если событие пришло с опозданием                            |
 
-Since data accuracy is important, we'll use the event time for aggregation.
+Поскольку точность данных важна, для агрегации будем использовать время события.
 
-To mitigate the issue of delayed events, a technique called "watermark" can be leveraged.
+Чтобы смягчить проблему запоздавших событий, можно применить технику под названием «watermark».
 
-In the example below, event 2 misses the window where it needs to be aggregated:
+В примере ниже событие 2 не попадает в окно, в котором его нужно агрегировать:
 
 <div style="margin-left:3rem">
-    <img src="./images/watermark-technique.png" alt="watermark-technique" width="500" />
+    <img src="./images/watermark-technique.png" alt="техника watermark" width="500" />
 </div>
 
-However, if we purposefully extend the aggregation window, we can reduce the likelihood of missed events.
-The extended part of a window is called a "watermark":
+Однако если намеренно расширить окно агрегации, можно снизить вероятность пропуска событий.
+Расширенная часть окна называется «watermark»:
 
 <div style="margin-left:3rem">
-    <img src="./images/watermark-2.png" alt="watermark-2" width="500" />
+    <img src="./images/watermark-2.png" alt="watermark 2" width="500" />
 </div>
 
- - Short watermark increases likelihood of missed events, but reduces latency
- - Longer watermark reduces likelihood of missed events, but increases latency
+ - Короткий watermark повышает вероятность пропуска событий, но снижает задержку
+ - Длинный watermark снижает вероятность пропуска событий, но увеличивает задержку
 
-There is always likelihood of missed events, regardless of the watermark's size. But there is no use in optimizing for such low-probability events.
+Вероятность пропуска событий есть всегда, независимо от размера watermark. Но оптимизировать систему под такие маловероятные события нет смысла.
 
-We can instead resolve such inconsistencies by doing end-of-day reconciliation.
+Вместо этого подобные расхождения можно устранять сверкой (reconciliation) в конце дня.
 
-### **Aggregation window**
-There are four types of window functions:
- - Tumbling (fixed) window
- - Hopping window
- - Sliding window
- - Session window
+### **Окно агрегации**
+Существует четыре типа оконных функций:
+ - Переворачивающееся (фиксированное) окно (tumbling window)
+ - Прыгающее окно (hopping window)
+ - Скользящее окно (sliding window)
+ - Сессионное окно (session window)
 
-In our design, we leverage a tumbling window for ad click aggregations:
+В нашем дизайне для агрегации кликов используется tumbling window:
 
 <div style="margin-left:3rem">
-    <img src="./images/tumbling-window.png" alt="tumbling-window" width="500" />
+    <img src="./images/tumbling-window.png" alt="tumbling window" width="500" />
 </div>
 
-As well as a sliding window for the top N clicked ads in M minutes aggregation:
+А для агрегации топ-N самых кликаемых объявлений за M минут — скользящее окно:
 
 <div style="margin-left:3rem">
-    <img src="./images/sliding-window.png" alt="sliding-window" width="500" />
+    <img src="./images/sliding-window.png" alt="скользящее окно" width="500" />
 </div>
 
-### **Delivery guarantees**
-Since the data we're aggregating is going to be used for billing, data accuracy is a priority.
+### **Гарантии доставки**
+Поскольку агрегируемые данные будут использоваться для биллинга, точность данных в приоритете.
 
-Hence, we need to discuss:
- - How to avoid processing duplicate events
- - How to ensure all events are processed
+Поэтому нужно обсудить:
+ - Как избежать обработки дублирующихся событий
+ - Как гарантировать, что все события будут обработаны
 
-There are three delivery guarantees we can use - at-most-once, at-least-once and exactly once.
+Существует три гарантии доставки: at-most-once, at-least-once и exactly-once.
 
-In most circumstances, at-least-once is sufficient when a small amount of duplicates is acceptable.
-This is not the case for our system, though, as a difference in small percent can result in millions of dollars of discrepancy.
-Hence, we'll need to use exactly-once delivery semantics.
+В большинстве случаев at-least-once достаточно, если небольшое количество дубликатов допустимо.
+Однако в нашей системе это не так: разница даже в небольшой процент может обернуться расхождением в миллионы долларов.
+Поэтому нам нужна семантика доставки exactly-once.
 
-### **Data deduplication**
-One of the most common data quality issues is duplicated data.
+### **Дедупликация данных**
+Одна из самых распространённых проблем качества данных — дублирование.
 
-It can come from a wide range of sources:
- - Client-side - a client might resend the same event multiple times. Duplicated events sent with malicious intent are best handled by a risk engine.
- - Server outage - An aggregation service node goes down in the middle of aggregation and the upstream service hasn't received an acknowledgment so event is resent.
+Дубликаты могут возникать по разным причинам:
+ - На стороне клиента — клиент может несколько раз повторно отправить одно и то же событие. Дубликаты, отправленные со злым умыслом, лучше всего обрабатывать антифрод-движком (risk engine).
+ - Сбой сервера — узел сервиса агрегации падает посреди агрегации, вышестоящий (upstream) сервис не получает подтверждения, и событие отправляется повторно.
 
-Here's an example of data duplication occurring due to failure to acknowledge an event on the last hop:
+Вот пример дублирования данных из-за того, что событие не было подтверждено на последнем шаге:
 
 <div style="margin-left:3rem">
-    <img src="./images/data-duplication-example.png" alt="data-duplication-example" width="500" />
+    <img src="./images/data-duplication-example.png" alt="пример дублирования данных" width="500" />
 </div>
 
-In this example, offset 100 will be processed and sent downstream multiple times.
+В этом примере offset 100 будет обработан и отправлен дальше несколько раз.
 
-One option to try and mitigate this is to store the last seen offset in HDFS/S3, but this risks the result never reaching downstream:
+Один из вариантов смягчить проблему — сохранять последний обработанный offset в HDFS (Hadoop Distributed File System — распределённая файловая система Hadoop)/S3, но тогда есть риск, что результат так и не дойдёт до downstream-системы:
 
 <div style="margin-left:3rem">
-    <img src="./images/data-duplication-example-2.png" alt="data-duplication-example-2" width="500" />
+    <img src="./images/data-duplication-example-2.png" alt="пример дублирования данных 2" width="500" />
 </div>
 
-Finally, we can store the offset while interacting with downstream atomically. To achieve this, we need to implement a distributed transaction:
+Наконец, можно сохранять offset атомарно вместе с взаимодействием с downstream-системой. Для этого нужно реализовать распределённую транзакцию:
 
 <div style="margin-left:3rem">
-    <img src="./images/data-duplication-example-3.png" alt="data-duplication-example-3" width="500" />
+    <img src="./images/data-duplication-example-3.png" alt="пример дублирования данных 3" width="500" />
 </div>
 
-**Personal side-note**: Alternatively, if the downstream system handles the aggregation result idempotently, there is no need for a distributed transaction.
+**Личное примечание**: как альтернатива — если downstream-система обрабатывает результаты агрегации идемпотентно, распределённая транзакция не нужна.
 
-### **Scale the system**
-Let's discuss how we scale the system as it grows.
+### **Масштабирование системы**
+Обсудим, как масштабировать систему по мере её роста.
 
-We have three independent components - message queue, aggregation service and database.
-Since they are decoupled, we can scale them independently.
+У нас есть три независимых компонента — очередь сообщений, сервис агрегации и база данных.
+Поскольку они развязаны, масштабировать их можно независимо.
 
-How do we scale the message queue:
- - We don't put a limit on producers, so they can be scaled easily
- - Consumers can be scaled by assigning them to consumer groups and increasing the number of consumers.
- - For this to work, we also need to ensure there are enough partitions created preemptively
- - Also, consumer rebalancing can take a while when there are thousands of consumers so it is recommended to do it off peak hours
- - We could also consider partitioning the topic by geography, eg `topic_na`, `topic_eu`, etc.
+Как масштабировать очередь сообщений:
+ - Мы не ограничиваем производителей, поэтому их легко масштабировать
+ - Потребителей можно масштабировать, объединяя их в группы потребителей и увеличивая их количество.
+ - Для этого также нужно заранее создать достаточное количество партиций
+ - Кроме того, ребалансировка потребителей может занимать заметное время, когда их тысячи, поэтому её рекомендуется проводить вне часов пиковой нагрузки
+ - Можно также рассмотреть партиционирование топика по географии, например `topic_na`, `topic_eu` и т. д.
 
 <div style="margin-left:3rem">
-    <img src="./images/scale-consumers.png" alt="scale-consumers" width="500" />
+    <img src="./images/scale-consumers.png" alt="масштабирование потребителей" width="500" />
 </div>
 
-How do we scale the aggregation service:
+Как масштабировать сервис агрегации:
 
 <div style="margin-left:3rem">
-    <img src="./images/aggregation-service-scaling.png" alt="aggregation-service-scaling" width="500" />
+    <img src="./images/aggregation-service-scaling.png" alt="масштабирование сервиса агрегации" width="500" />
 </div>
 
- - The map-reduce nodes can easily be scaled by adding more nodes
- - The throughput of the aggregation service can be scaled by by utilising multi-threading
- - Alternatively, we can leverage resource providers such as Apache YARN to utilize multi-processing
- - Option 1 is easier, but option 2 is more widely used in practice as it's more scalable
- - Here's the multi-threading example:
+ - Узлы map-reduce легко масштабировать, добавляя новые узлы
+ - Пропускную способность сервиса агрегации можно увеличить за счёт многопоточности
+ - Как вариант, можно использовать менеджеры ресурсов, например Apache YARN (Yet Another Resource Negotiator — менеджер ресурсов кластера Hadoop), для многопроцессной обработки
+ - Вариант 1 проще, но вариант 2 шире используется на практике, поскольку лучше масштабируется
+ - Вот пример с многопоточностью:
 
 <div style="margin-left:3rem">
-    <img src="./images/multi-threading-example.png" alt="multi-threading-example" width="500" />
+    <img src="./images/multi-threading-example.png" alt="пример многопоточности" width="500" />
 </div>
 
-How do we scale the database:
- - If we use Cassandra, it natively supports horizontal scaling utilizing consistent hashing
- - If a new node is added to the cluster, data automatically gets rebalanced across all (virtual) nodes
- - With this approach, no manual (re)sharding is required
+Как масштабировать базу данных:
+ - Cassandra нативно поддерживает горизонтальное масштабирование с помощью консистентного хеширования (consistent hashing)
+ - При добавлении нового узла в кластер данные автоматически перераспределяются между всеми (виртуальными) узлами
+ - При таком подходе ручной (ре)шардинг не требуется
 
 <div style="margin-left:3rem">
-    <img src="./images/cassandra-scalability.png" alt="cassandra-scalability" width="500" />
+    <img src="./images/cassandra-scalability.png" alt="масштабируемость Cassandra" width="500" />
 </div>
 
-Another scalability issue to consider is the hotspot issue - what if an ad is more popular and gets more attention than others?
+Ещё одна проблема масштабируемости — горячие точки (hotspot): что если одно объявление популярнее других и получает больше внимания?
 
 <div style="margin-left:3rem">
-    <img src="./images/hotspot-issue.png" alt="hotspot-issue" width="500" />
+    <img src="./images/hotspot-issue.png" alt="проблема горячих точек" width="500" />
 </div>
 
- - In the above example, aggregation service nodes can apply for extra resources via the resource manager
- - The resource manager allocates more resources, so the original node isn't overloaded
- - The original node splits the events into 3 groups and each of the aggregation nodes handles 100 events
- - Result is written back to the original aggregation node
+ - В примере выше узлы сервиса агрегации могут запросить дополнительные ресурсы через менеджер ресурсов
+ - Менеджер ресурсов выделяет дополнительные ресурсы, чтобы исходный узел не был перегружен
+ - Исходный узел разбивает события на 3 группы, и каждый из узлов агрегации обрабатывает по 100 событий
+ - Результат записывается обратно в исходный узел агрегации
 
-Alternative, more sophisticated ways to handle the hotspot problem:
- - Global-Local Aggregation
- - Split Distinct Aggregation
+Альтернативные, более сложные способы решения проблемы горячих точек:
+ - Глобально-локальная агрегация (Global-Local Aggregation)
+ - Разделённая агрегация distinct (Split Distinct Aggregation)
 
-### **Fault Tolerance**
-Within the aggregation nodes, we are processing data in-memory. If a node goes down, the processed data is lost.
+### **Отказоустойчивость**
+Узлы агрегации обрабатывают данные в памяти. Если узел падает, обработанные данные теряются.
 
-We can leverage consumer offsets in kafka to continue from where we left off once another node picks up the slack.
-However, there is additional intermediary state we need to maintain, as we're aggregating the top N ads in M minutes.
+Можно использовать offset'ы потребителей в Kafka, чтобы продолжить с того места, где остановились, когда работу подхватит другой узел.
+Однако есть и дополнительное промежуточное состояние, которое нужно сохранять, поскольку мы агрегируем топ-N объявлений за M минут.
 
-We can make snapshots at a particular minute for the on-going aggregation:
+Можно делать снимки (snapshots) текущей агрегации на определённую минуту:
 
 <div style="margin-left:3rem">
-    <img src="./images/fault-tolerance-example.png" alt="fault-tolerance-example" width="500" />
+    <img src="./images/fault-tolerance-example.png" alt="пример отказоустойчивости" width="500" />
 </div>
 
-If a node goes down, the new node can read the latest committed consumer offset, as well as the latest snapshot to continue the job:
+Если узел падает, новый узел может прочитать последний закоммиченный offset потребителя, а также последний снимок, и продолжить работу:
 
 <div style="margin-left:3rem">
-    <img src="./images/fault-tolerance-recovery-example.png" alt="fault-tolerance-recovery-example" width="500" />
+    <img src="./images/fault-tolerance-recovery-example.png" alt="пример восстановления после отказа" width="500" />
 </div>
 
-### **Data monitoring and correctness**
-As the data we're aggregating is critical as it's used for billing, it is very important to have rigorous monitoring in place in order to ensure correctness.
+### **Мониторинг и корректность данных**
+Поскольку агрегируемые данные критичны и используются для биллинга, очень важно наладить строгий мониторинг для обеспечения корректности.
 
-Some metrics we might want to monitor:
- - **Latency**: Timestamps of different events can be tracked in order to understand the e2e latency of the system
- - **Message queue size**: If there is a sudden increase in queue size, we need to add more aggregation nodes. As Kafka is implemented via a distributed commit log, we need to keep track of records-lag metrics instead.
- - **System resources on aggregation nodes**: CPU, disk, JVM, etc.
+Некоторые метрики, которые стоит отслеживать:
+ - **Задержка**: можно отслеживать временные метки различных событий, чтобы понимать сквозную задержку системы
+ - **Размер очереди сообщений**: при резком росте размера очереди нужно добавить узлы агрегации. Поскольку Kafka реализована как распределённый журнал коммитов (commit log), вместо этого нужно отслеживать метрики records-lag.
+ - **Системные ресурсы на узлах агрегации**: CPU (Central Processing Unit — центральный процессор), диск, JVM (Java Virtual Machine — виртуальная машина Java) и т. д.
 
-We also need to implement a reconciliation flow which is a batch job, running at the end of the day. 
-It calculates the aggregated results from the raw data and compares them against the actual data stored in the aggregation database:
+Также нужно реализовать процесс сверки (reconciliation) — пакетное задание, запускаемое в конце дня.
+Оно рассчитывает агрегированные результаты из сырых данных и сравнивает их с фактическими данными в базе агрегатов:
 
 <div style="margin-left:3rem">
-    <img src="./images/reconciliation-flow.png" alt="reconciliation-flow" width="500" />
+    <img src="./images/reconciliation-flow.png" alt="процесс сверки" width="500" />
 </div>
 
-### **Alternative design**
-In a generalist system design interview, you are not expected to know the internals of specialized software used in big data processing.
+### **Альтернативный дизайн**
+На общем интервью по system design от вас не ожидают знания внутреннего устройства специализированного ПО для обработки больших данных.
 
-Explaining the thought process and discussing trade-offs is more important than knowing specific tools, which is why the chapter covers a generic solution.
+Объяснение хода мысли и обсуждение компромиссов важнее знания конкретных инструментов, поэтому в главе рассматривается универсальное решение.
 
-An alternative design, which leverages off-the-shelf tooling, is to store ad click data in Hive with an ElasticSearch layer on top built for faster queries.
+Альтернативный дизайн на основе готовых инструментов — хранить данные о кликах в Hive со слоем ElasticSearch поверх для более быстрых запросов.
 
-Aggregation is typically done in OLAP databases such as ClickHouse or Druid.
+Агрегация обычно выполняется в OLAP-базах данных, таких как ClickHouse или Druid.
 
 <div style="margin-left:3rem">
-    <img src="./images/alternative-design.png" alt="alternative-design" width="500" />
+    <img src="./images/alternative-design.png" alt="альтернативный дизайн" width="500" />
 </div>
 
 ---
 
-## Step 4: Wrap up
-Things we covered:
- - Data model and API Design
- - Using MapReduce to aggregate ad click events
- - Scaling the message queue, aggregation service and database
- - Mitigating the hotspot issue
- - Monitoring the system continuously
- - Using reconciliation to ensure correctness
- - Fault tolerance
+## Шаг 4: Подведение итогов
+Что мы рассмотрели:
+ - Модель данных и дизайн API
+ - Использование MapReduce для агрегации событий кликов по рекламе
+ - Масштабирование очереди сообщений, сервиса агрегации и базы данных
+ - Смягчение проблемы горячих точек
+ - Непрерывный мониторинг системы
+ - Использование сверки для обеспечения корректности
+ - Отказоустойчивость
 
-The ad click event aggregation is a typical big data processing system.
+Агрегация событий кликов по рекламе — типичная система обработки больших данных.
 
-It would be easier to understand and design it if you have prior knowledge of related technologies:
+Её будет проще понять и спроектировать, если вы заранее знакомы со связанными технологиями:
  - Apache Kafka
  - Apache Spark
  - Apache Flink

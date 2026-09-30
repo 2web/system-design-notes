@@ -1,131 +1,133 @@
-# Chapter 11: Design a News Feed System
+**Русский** | [English](./Readme.en.md)
 
-## Introduction
-A **news feed system** displays a constantly updating list of posts (status updates, photos, videos, and links) from a user’s connections. Examples include Facebook’s news feed, Instagram’s feed, and Twitter’s timeline. This chapter explores the design of a scalable news feed system.
+# Глава 11: Проектирование системы новостной ленты
 
----
-
-## Step 1: Understanding the Problem
-
-### Requirements
-1. **Platform:** The system supports both web and mobile apps.
-2. **Features:**
-   - Users can publish posts.
-   - Users can view posts from friends in their news feed.
-3. **Sorting:** Feeds are sorted in **reverse chronological order** for simplicity.
-4. **Scale:**
-   - Users can have up to 5,000 friends.
-   - 10 million daily active users (DAU).
-   - Feeds may include text, images, and videos.
+## Введение
+**Система новостной ленты (news feed system)** отображает постоянно обновляемый список публикаций (обновлений статуса, фотографий, видео и ссылок) от контактов пользователя. Примеры — лента новостей Facebook, лента Instagram и хронология (timeline) Twitter. В этой главе рассматривается проектирование масштабируемой системы новостной ленты.
 
 ---
 
-## Step 2: High-Level Design
+## Шаг 1: Понимание задачи
 
-### Overview
-The design includes two main flows:
-1. **Feed Publishing:** A user publishes a post, which is written to the database and propagated to their friends’ feeds.
-2. **News Feed Building:** A user retrieves their news feed by aggregating posts from friends in reverse chronological order.
-
----
-
-### News Feed APIs
-1. **Feed Publishing API:**
-   - **Endpoint:** `POST /v1/me/feed`
-   - **Params:** `content` (post text) and `auth_token` (authentication).
-
-2. **News Feed Retrieval API:**
-   - **Endpoint:** `GET /v1/me/feed`
-   - **Params:** `auth_token` (authentication).
+### Требования
+1. **Платформа:** система поддерживает как веб-, так и мобильные приложения.
+2. **Функциональность:**
+   - Пользователи могут публиковать посты.
+   - Пользователи видят посты друзей в своей новостной ленте.
+3. **Сортировка:** для простоты лента сортируется в **обратном хронологическом порядке**.
+4. **Масштаб:**
+   - У пользователя может быть до 5 000 друзей.
+   - 10 миллионов активных пользователей в день — DAU (Daily Active Users — число уникальных пользователей, заходящих в сервис за день).
+   - Лента может содержать текст, изображения и видео.
 
 ---
 
-### Feed Publishing
+## Шаг 2: Высокоуровневый дизайн
+
+### Обзор
+Дизайн включает два основных процесса:
+1. **Публикация в ленту (feed publishing):** пользователь публикует пост, который записывается в базу данных и распространяется по лентам его друзей.
+2. **Построение новостной ленты (news feed building):** пользователь получает свою ленту, собранную из постов друзей в обратном хронологическом порядке.
+
+---
+
+### API (Application Programming Interface — программный интерфейс приложения) новостной ленты
+1. **API публикации в ленту:**
+   - **Эндпоинт:** `POST /v1/me/feed`
+   - **Параметры:** `content` (текст поста) и `auth_token` (аутентификация).
+
+2. **API получения новостной ленты:**
+   - **Эндпоинт:** `GET /v1/me/feed`
+   - **Параметры:** `auth_token` (аутентификация).
+
+---
+
+### Публикация в ленту
 
    <div style="margin-left:3rem">
-      <img src="./images/feed-publishing.png" alt="Feed Publishing" width="400">
+      <img src="./images/feed-publishing.png" alt="Публикация в ленту" width="400">
    </div>
 
-1. **User Interaction:** The user publishes a post via the feed publishing API.
-2. **Load Balancer:** Distributes traffic to web servers.
-3. **Web Servers:** Authenticate requests and redirect to services.
-4. **Post Service:** Stores the post in the database and cache.
-5. **Fanout Service:** Propagates the post to friends’ news feeds in the cache.
-6. **Notification Service:** Sends notifications to friends.
+1. **Действие пользователя:** пользователь публикует пост через API публикации.
+2. **Балансировщик нагрузки (load balancer):** распределяет трафик по веб-серверам.
+3. **Веб-серверы:** аутентифицируют запросы и перенаправляют их в сервисы.
+4. **Сервис постов (post service):** сохраняет пост в базе данных и кеше.
+5. **Сервис рассылки (fanout service):** распространяет пост по новостным лентам друзей в кеше.
+6. **Сервис уведомлений (notification service):** отправляет уведомления друзьям.
 
 ---
 
-### News Feed Building
+### Построение новостной ленты
 
    <div style="margin-left:3rem">
-      <img src="./images/news-feed-building.png" alt="News Feed Building" width="400">
+      <img src="./images/news-feed-building.png" alt="Построение новостной ленты" width="400">
    </div>
 
-1. **User Interaction:** The user requests their news feed via the retrieval API.
-2. **Load Balancer:** Distributes traffic to web servers.
-3. **Web Servers:** Forward requests to the news feed service.
-4. **News Feed Service:** Fetches post IDs from the news feed cache and retrieves complete post details from the database or cache.
+1. **Действие пользователя:** пользователь запрашивает свою ленту через API получения.
+2. **Балансировщик нагрузки:** распределяет трафик по веб-серверам.
+3. **Веб-серверы:** перенаправляют запросы в сервис новостной ленты.
+4. **Сервис новостной ленты (news feed service):** получает ID (identifier — идентификаторы) постов из кеша новостной ленты и загружает полные данные постов из базы данных или кеша.
 
    
 ---
 
-## Step 3: Design Deep Dive
+## Шаг 3: Детальный разбор дизайна
 
-### Feed Publishing Deep Dive
-1. **Web Servers:**
-   - Authenticate users using `auth_token`.
-   - Enforce rate limits to prevent spam.
+### Публикация в ленту: детальный разбор
+1. **Веб-серверы:**
+   - Аутентифицируют пользователей с помощью `auth_token`.
+   - Применяют ограничение частоты запросов (rate limiting) для защиты от спама.
 
-2. **Fanout Service:**
-   - **Fanout on Write:** Push posts to friends’ feeds at write time.
-     - **Pros:** Real-time updates, fast feed retrieval.
-     - **Cons:** Resource-intensive for users with many friends.
-   - **Fanout on Read:** Pull posts at read time.
-     - **Pros:** Efficient for inactive users.
-     - **Cons:** Slower feed retrieval.
-   - **Hybrid Approach:** Use a push model for most users and a pull model for high-connection users (e.g., celebrities).
+2. **Сервис рассылки (fanout service):**
+   - **Рассылка при записи (fanout on write):** посты доставляются в ленты друзей в момент записи.
+     - **Плюсы:** обновления в реальном времени, быстрое получение ленты.
+     - **Минусы:** ресурсоёмко для пользователей с большим количеством друзей.
+   - **Рассылка при чтении (fanout on read):** посты подтягиваются в момент чтения.
+     - **Плюсы:** эффективно для неактивных пользователей.
+     - **Минусы:** более медленное получение ленты.
+   - **Гибридный подход:** push-модель для большинства пользователей и pull-модель для пользователей с большим числом связей (например, знаменитостей).
 
-        <img src="./images/feed-publishing-deep-dive.png" alt="Feed Publishing Deep Dive" width="500">
+        <img src="./images/feed-publishing-deep-dive.png" alt="Публикация в ленту: детальный разбор" width="500">
 
-    The **fanout service** works as following:
+    **Сервис рассылки** работает следующим образом:
 
-    1. **Fetch Friend IDs:** Retrieve the friend list from a graph database.
-    2. **Filter Friends from Cache:** Access user settings in the cache to exclude certain friends (e.g., muted friends or selective sharing preferences).
-    3. **Send to Message Queue:** Send the filtered friend list along with the new post ID to a message queue for processing.
-    4. **Fanout Workers:** Workers retrieve data from the message queue and update the news feed cache. The cache stores `<post_id, user_id>` mappings instead of full user and post objects to save memory.
-    5. **Store in News Feed Cache:** Append new post IDs to the friends’ news feed cache. A configurable limit ensures that only recent posts are stored, as most users focus on the latest content, keeping cache memory consumption manageable.
+    1. **Получение ID друзей:** список друзей извлекается из графовой базы данных.
+    2. **Фильтрация друзей через кеш:** по настройкам пользователя в кеше исключаются определённые друзья (например, заглушённые или не входящие в круг выборочного доступа).
+    3. **Отправка в очередь сообщений:** отфильтрованный список друзей вместе с ID нового поста отправляется в очередь сообщений для обработки.
+    4. **Воркеры рассылки (fanout workers):** воркеры забирают данные из очереди сообщений и обновляют кеш новостной ленты. Для экономии памяти в кеше хранятся пары `<post_id, user_id>`, а не полные объекты пользователей и постов.
+    5. **Сохранение в кеш новостной ленты:** ID новых постов добавляются в кеш новостной ленты друзей. Настраиваемый лимит гарантирует, что хранятся только последние посты — большинство пользователей интересуется свежим контентом, — что позволяет держать потребление памяти кеша под контролем.
 
-        <img src="./images/fanout-service.png" alt="Fanout Service" width="500">
+        <img src="./images/fanout-service.png" alt="Сервис рассылки" width="500">
 
-## News Feed Retrieval Deep Dive
+## Получение новостной ленты: детальный разбор
 
-### Cache Architecture
-The cache is divided into five layers:
-1. **News Feed Cache:** Stores post IDs for quick retrieval.
-2. **Content Cache:** Stores post details (popular posts in hot cache).
-3. **Social Graph Cache:** Stores user relationship data.
-4. **Action Cache:** Tracks user actions (likes, replies, shares).
-5. **Counter Cache:** Maintains counts for likes, replies, followers, etc.
+### Архитектура кеша
+Кеш разделён на пять уровней:
+1. **Кеш новостной ленты (news feed cache):** хранит ID постов для быстрого получения.
+2. **Кеш контента (content cache):** хранит данные постов (популярные посты — в «горячем» кеше).
+3. **Кеш социального графа (social graph cache):** хранит данные о связях между пользователями.
+4. **Кеш действий (action cache):** отслеживает действия пользователей (лайки, ответы, репосты).
+5. **Кеш счётчиков (counter cache):** хранит количество лайков, ответов, подписчиков и т. д.
 
-    <img src="./images/cache-architecture.png" alt="Cache Architecture" width="500">
+    <img src="./images/cache-architecture.png" alt="Архитектура кеша" width="500">
 ---
 
-## Key Optimizations
+## Ключевые оптимизации
 
-### Scaling
-1. **Database Scaling:**
-   - Horizontal scaling and sharding.
-   - Use of read replicas for high-traffic queries.
-2. **Stateless Web Tier:** Keep web servers stateless to enable horizontal scaling.
+### Масштабирование
+1. **Масштабирование базы данных:**
+   - Горизонтальное масштабирование и шардирование.
+   - Использование реплик для чтения (read replicas) для высоконагруженных запросов.
+2. **Веб-уровень без состояния (stateless web tier):** веб-серверы не хранят состояние, что позволяет масштабировать их горизонтально.
 
-### Caching
-1. Store frequently accessed data in memory.
-2. Use cache layers to reduce latency and database load.
+### Кеширование
+1. Хранить часто запрашиваемые данные в памяти.
+2. Использовать уровни кеша для снижения задержки и нагрузки на базу данных.
 
-### Reliability
-1. **Consistent Hashing:** Distribute requests evenly across servers.
-2. **Message Queues:** Decouple system components and buffer traffic.
+### Надёжность
+1. **Консистентное хеширование:** равномерное распределение запросов по серверам.
+2. **Очереди сообщений:** развязка компонентов системы и буферизация трафика.
 
-### Monitoring
-1. Track key metrics like QPS (queries per second) and latency.
-2. Monitor cache hit rates and adjust configurations accordingly.
+### Мониторинг
+1. Отслеживать ключевые метрики, такие как QPS (Queries Per Second — число запросов в секунду) и задержка.
+2. Контролировать долю попаданий в кеш (cache hit rate) и соответствующим образом корректировать конфигурацию.

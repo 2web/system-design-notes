@@ -1,230 +1,232 @@
-# Chapter 15: Design Google Drive
+**Русский** | [English](./Readme.en.md)
 
-## Introduction
-Google Drive is a cloud-based file storage and synchronization service that allows users to store, access, and share files from various devices. This chapter discusses designing a scalable system with the following features:
-- **File Upload and Download**
-- **File Sync Across Devices**
-- **File Sharing**
-- **File Revision History**
-- **Notifications for Edits, Deletes, and Shares**
+# Глава 15: Проектирование Google Drive
 
----
-
-## Step 1: Understanding the Problem
-
-### Key Requirements
-#### Functional Requirements:
-- Upload and download files.
-- Sync files across multiple devices.
-- Maintain file revisions.
-- Enable file sharing with permissions.
-- Send notifications on file edits, deletions, and shares.
-
-#### Non-Functional Requirements:
-- **Reliability:** Data loss is unacceptable.
-- **Fast Sync Speed:** Avoid user impatience with delayed syncing.
-- **Bandwidth Efficiency:** Minimize unnecessary data usage.
-- **Scalability:** Handle 10 million daily active users (DAU).
-- **High Availability:** Operate seamlessly during server failures or network issues.
-
-### Constraints and Assumptions
-- Users get **10 GB free space**.
-- Maximum file size: **10 GB**.
-- Average file upload size: **500 KB**.
-- Upload frequency: **2 files per day per user**.
-- Total storage required: **500 PB**.
+## Введение
+Google Drive — облачный сервис хранения и синхронизации файлов, позволяющий пользователям хранить файлы, получать к ним доступ и делиться ими с разных устройств. В этой главе рассматривается проектирование масштабируемой системы со следующими возможностями:
+- **Загрузка и скачивание файлов**
+- **Синхронизация файлов между устройствами**
+- **Совместный доступ к файлам**
+- **История изменений (ревизий) файлов**
+- **Уведомления о редактировании, удалении и предоставлении доступа**
 
 ---
 
-## Step 2: High-Level Design
-### Single-Server Setup
-A basic setup includes:
-1. **Web Server:** Handles uploads and downloads.
-2. **Metadata Database:**  to keep track of metadata like user data, login info, files info/
-3. **Storage Directory:** Holds files organized by namespaces.
+## Шаг 1: Понимание задачи
+
+### Ключевые требования
+#### Функциональные требования:
+- Загрузка и скачивание файлов.
+- Синхронизация файлов между несколькими устройствами.
+- Хранение ревизий файлов.
+- Совместный доступ к файлам с управлением правами.
+- Отправка уведомлений о редактировании, удалении файлов и предоставлении доступа к ним.
+
+#### Нефункциональные требования:
+- **Надёжность:** потеря данных недопустима.
+- **Высокая скорость синхронизации:** не заставлять пользователей ждать из-за задержек синхронизации.
+- **Экономия пропускной способности:** минимизировать лишний расход трафика.
+- **Масштабируемость:** обслуживать 10 миллионов активных пользователей в день — DAU (Daily Active Users — число уникальных пользователей, заходящих в сервис за день).
+- **Высокая доступность:** бесперебойная работа при отказах серверов или проблемах с сетью.
+
+### Ограничения и допущения
+- Пользователи получают **10 ГБ бесплатного пространства**.
+- Максимальный размер файла: **10 ГБ**.
+- Средний размер загружаемого файла: **500 КБ**.
+- Частота загрузки: **2 файла в день на пользователя**.
+- Общий требуемый объём хранилища: **500 ПБ**.
+
+---
+
+## Шаг 2: Высокоуровневый дизайн
+### Конфигурация с одним сервером
+Базовая конфигурация включает:
+1. **Веб-сервер:** обрабатывает загрузку и скачивание.
+2. **База данных метаданных:** отслеживает метаданные, такие как данные пользователей, информация о входе, информация о файлах.
+3. **Каталог хранилища:** содержит файлы, организованные по пространствам имён (namespaces).
 
 
 <div style="margin-left:3rem">
-    <img src="./images/namespaces.png" alt="Namespaces" width="400" />
+    <img src="./images/namespaces.png" alt="Пространства имён" width="400" />
 </div>
 
-- A web server and a directory called drive/ is set up as the root directory to store uploaded files. 
-- Under drive/ directory, there is a list of directories called namespaces. 
-- Each namespace contains all the uploaded files for that user. 
-- Each file or folder can be uniquely identified by joining the namespace and the relative path.
+- Настраивается веб-сервер, а в качестве корневого каталога для хранения загруженных файлов используется каталог drive/. 
+- Внутри каталога drive/ находится набор каталогов — пространств имён. 
+- Каждое пространство имён содержит все файлы, загруженные соответствующим пользователем. 
+- Каждый файл или папку можно однозначно идентифицировать, объединив пространство имён и относительный путь.
 
 
-This design serves as a starting point but is inadequate for scaling.
+Этот дизайн служит отправной точкой, но непригоден для масштабирования.
 
-#### APIs
-1. **Upload a file to Google Drive:** Two types of uploads are supported
-    - Simple upload: Used when file size is small.
-    - Resumable upload: 
-        - Endpoint: https://api.example.com/files/upload?uploadType=resumable
-        - Send the initial request to retrieve the resumable URL.
-        - Upload the data and monitor upload state
-        - If upload is disturbed, resume the upload.
-2. **Download a file from Google Drive:** To download a file
-    -  Endpoint: https://api.example.com/files/download
-3. **Get file revisions:**
-    - Endpoint: https://api.example.com/files/list_revisions
+#### API (Application Programming Interface — программный интерфейс приложения)
+1. **Загрузка файла в Google Drive:** поддерживаются два типа загрузки
+    - Простая загрузка (simple upload): используется для файлов небольшого размера.
+    - Возобновляемая загрузка (resumable upload): 
+        - Эндпоинт: https://api.example.com/files/upload?uploadType=resumable
+        - Отправить начальный запрос, чтобы получить URL (Uniform Resource Locator — адрес ресурса) для возобновляемой загрузки.
+        - Загрузить данные и отслеживать состояние загрузки.
+        - Если загрузка прервалась, возобновить её.
+2. **Скачивание файла из Google Drive:** для скачивания файла
+    -  Эндпоинт: https://api.example.com/files/download
+3. **Получение ревизий файла:**
+    - Эндпоинт: https://api.example.com/files/list_revisions
 
-### Moving to Distributed Systems
+### Переход к распределённой системе
 
-#### Improvements:
-1. **Sharding:** Split storage across servers based on `user_id`.
-2. **Amazon S3:** Use S3 for scalable and redundant file storage with cross-region replication.
+#### Улучшения:
+1. **Шардирование:** распределение хранилища по серверам на основе `user_id`.
+2. **Amazon S3:** использование S3 (Simple Storage Service — объектное хранилище AWS) для масштабируемого и избыточного хранения файлов с межрегиональной репликацией.
 
-    <img src="./images/replication.png" alt="Replication" width="600" />
+    <img src="./images/replication.png" alt="Репликация" width="600" />
      
-3. **Load Balancer:** Distribute traffic across multiple web servers.
-4. **Metadata Database Replication:** Ensure availability through database sharding and replication.
+3. **Балансировщик нагрузки:** распределение трафика между несколькими веб-серверами.
+4. **Репликация базы данных метаданных:** обеспечение доступности за счёт шардирования и репликации базы данных.
 
 
-#### Sync Conflicts:
-For a large storage system like Google Drive, sync conflicts happen from time to time.
-When two users modify the same file or folder at the same time, a conflict happens.
+#### Конфликты синхронизации:
+В крупной системе хранения, такой как Google Drive, конфликты синхронизации время от времени неизбежны.
+Конфликт возникает, когда два пользователя одновременно изменяют один и тот же файл или папку.
 
 <div style="margin-left:5rem">
-<img src="./images/sync-conflicts.png" alt="Sync Conflicts" width="600" />
+<img src="./images/sync-conflicts.png" alt="Конфликты синхронизации" width="600" />
 </div>
 
-- In the example user 1 and user 2 tries to update the same file at the same time, but user 1’s file is processed by our system first.
-- User 1’s update operation goes through, but, user 2 gets a sync conflict. 
-- The system presents both copies of the same file: user 2’s local copy and the latest version from the server.
-- User 2 has the option to merge both files or override one version with the other.
+- В примере пользователь 1 и пользователь 2 одновременно пытаются обновить один и тот же файл, но файл пользователя 1 обрабатывается системой первым.
+- Операция обновления пользователя 1 проходит успешно, а пользователь 2 получает конфликт синхронизации. 
+- Система показывает обе копии файла: локальную копию пользователя 2 и последнюю версию с сервера.
+- Пользователь 2 может объединить оба файла или заменить одну версию другой.
 
-### Improved design
+### Улучшенный дизайн
 <div style="margin-left:5rem">
-<img src="./images/high-level-design.png" alt="High Level Design" width="500" />
+<img src="./images/high-level-design.png" alt="Высокоуровневый дизайн" width="500" />
 </div>
 
-1. **User Interaction:**: Users access the application via browser or mobile app.
+1. **Взаимодействие с пользователем:** пользователи работают с приложением через браузер или мобильное приложение.
 
-2. **Block Servers:**
-   - Files are split into **4 MB blocks** (maximum size) and assigned unique hash values.
-   - Blocks are stored independently in cloud storage (e.g., Amazon S3).
-   - File reconstruction involves joining blocks in a specific order.
+2. **Блочные серверы (block servers):**
+   - Файлы разбиваются на **блоки по 4 МБ** (максимальный размер), каждому из которых присваивается уникальное хеш-значение.
+   - Блоки хранятся в облачном хранилище независимо друг от друга (например, в Amazon S3).
+   - Восстановление файла сводится к объединению блоков в определённом порядке.
 
-3. **Cloud Storage:** Blocks are stored in cloud storage for scalability and redundancy.
+3. **Облачное хранилище:** блоки хранятся в облачном хранилище для обеспечения масштабируемости и избыточности.
 
-4. **Cold Storage:** Inactive files are moved to cold storage to reduce costs.
+4. **Холодное хранилище (cold storage):** неактивные файлы переносятся в холодное хранилище для снижения затрат.
 
-5. **Load Balancer:** Distributes requests evenly among API servers to ensure efficient operation.
+5. **Балансировщик нагрузки:** равномерно распределяет запросы между API-серверами для эффективной работы.
 
-6. **API Servers:**
-   - Handle user authentication, profile management, and file metadata updates.
-   - Manage all non-uploading workflows.
+6. **API-серверы:**
+   - Отвечают за аутентификацию пользователей, управление профилями и обновление метаданных файлов.
+   - Обслуживают все процессы, кроме загрузки файлов.
 
-7. **Metadata Database and Cache:**
-   - Stores metadata for users, files, blocks, and versions.
-   - Frequently accessed metadata is cached for faster retrieval.
+7. **База данных метаданных и кеш:**
+   - Хранит метаданные пользователей, файлов, блоков и версий.
+   - Часто запрашиваемые метаданные кешируются для ускорения доступа.
 
-8. **Notification Service:**
-   - A **publisher/subscriber system** that notifies clients about file changes (add, edit, delete).
-   - Ensures clients can pull the latest updates.
+8. **Сервис уведомлений:**
+   - **Система «издатель–подписчик» (publisher/subscriber)**, уведомляющая клиентов об изменениях файлов (добавление, редактирование, удаление).
+   - Обеспечивает клиентам возможность получать последние обновления.
 
-9. **Offline Backup Queue:** Temporarily stores file change information for offline clients to sync when back online.
+9. **Очередь резервирования для офлайн-клиентов (offline backup queue):** временно хранит информацию об изменениях файлов, чтобы офлайн-клиенты могли синхронизироваться, когда снова выйдут в сеть.
 
 ---
 
-## Step 3: Design Deep Dive
+## Шаг 3: Детальный разбор дизайна
 
-### Metadata Database
-A highly simplified is shown below version as it only includes the most important tables and fields.
-#### Schema Design:
-- **User Table:** Stores user profiles and preferences.
-- **File Table:** Maintains file metadata (e.g., size, name, path).
-- **Block Table:** Tracks file blocks for reconstructing files.
-- **File Version Table:** Stores file revision history.
+### База данных метаданных
+Ниже приведена сильно упрощённая версия, включающая только самые важные таблицы и поля.
+#### Проектирование схемы:
+- **Таблица пользователей (User):** хранит профили и настройки пользователей.
+- **Таблица файлов (File):** хранит метаданные файлов (например, размер, имя, путь).
+- **Таблица блоков (Block):** отслеживает блоки файлов для их восстановления.
+- **Таблица версий файлов (File Version):** хранит историю ревизий файлов.
 
 <div style="margin-left:5rem">
-<img src="./images/metadata-database.png" alt="Metadata Database " width="500" />
+<img src="./images/metadata-database.png" alt="База данных метаданных" width="500" />
 </div>
 
 ---
 
-### File Upload Flow
+### Процесс загрузки файла
 
-1. **File Upload:**
-   - File is split into blocks, compressed, and encrypted by the block server.
-   - Blocks are uploaded to block servers and stored in S3.
-2. **Metadata Upload:**
-   - Client sends metadata to the API server.
-   - Metadata is stored in the database with status `pending`.
-3. **Completion:**
-   - S3 triggers a callback to update the file status to `uploaded`.
-   - Notification service informs relevant users.
+1. **Загрузка файла:**
+   - Блочный сервер разбивает файл на блоки, сжимает и шифрует их.
+   - Блоки загружаются на блочные серверы и сохраняются в S3.
+2. **Загрузка метаданных:**
+   - Клиент отправляет метаданные на API-сервер.
+   - Метаданные сохраняются в базе данных со статусом `pending`.
+3. **Завершение:**
+   - S3 вызывает callback, который обновляет статус файла на `uploaded`.
+   - Сервис уведомлений оповещает соответствующих пользователей.
 
 
 <div style="margin-left:5rem">
-<img src="./images/upload-flow.png" alt="Upload Flow " width="500" />
+<img src="./images/upload-flow.png" alt="Процесс загрузки" width="500" />
 </div>
 
 
 ---
 
-### File Sync
-1. **Delta Sync:** Transfer only modified blocks instead of the entire file.
+### Синхронизация файлов
+1. **Дельта-синхронизация (delta sync):** передаются только изменённые блоки, а не весь файл.
 
     <div style="margin-left:2rem">
-    <img src="./images/delta-sync.png" alt="Delta Sync" width="400" />
+    <img src="./images/delta-sync.png" alt="Дельта-синхронизация" width="400" />
     </div>
 
-2. **Compression:** Blocks are compressed using compression algorithms depending on file types. 
-3. **Conflict Resolution:**
-   - First processed version wins.
-   - Conflicting versions are saved separately for user resolution.
+2. **Сжатие:** блоки сжимаются алгоритмами, выбираемыми в зависимости от типа файла. 
+3. **Разрешение конфликтов:**
+   - Побеждает версия, обработанная первой.
+   - Конфликтующие версии сохраняются отдельно, чтобы пользователь мог разрешить конфликт сам.
 
 <div style="margin-left:5rem">
-<img src="./images/file-sync.png" alt="File Synce " width="400" />
+<img src="./images/file-sync.png" alt="Синхронизация файлов" width="400" />
 </div>
 
 ---
 
-### File Download Flow
-Download flow is triggered when a file is added or edited elsewhere. There are two ways a client can know:
-- If client A is online while a file is changed by another client, notification service will inform client A.
-- If client A is offline while a file is changed by another client, data will be saved to the cache. When the offline client is online again, it pulls the latest changes.
+### Процесс скачивания файла
+Процесс скачивания запускается, когда файл добавлен или изменён в другом месте. Клиент может узнать об этом двумя способами:
+- Если клиент A в сети, когда другой клиент изменяет файл, сервис уведомлений сообщит об этом клиенту A.
+- Если клиент A не в сети, когда другой клиент изменяет файл, данные сохраняются в кеш. Когда офлайн-клиент снова выходит в сеть, он забирает последние изменения.
 
-Once a client knows a file is changed, it first requests metadata via API servers, then
-downloads blocks to construct the file.
+Узнав об изменении файла, клиент сначала запрашивает метаданные через API-серверы, а затем
+скачивает блоки для восстановления файла.
 
-1. **Trigger:** Notification service informs the client of file updates.
-2. **Metadata Fetch:** Client retrieves updated metadata via API.
-3. **Block Download:** Client downloads updated blocks from block servers and reconstructs the file.
+1. **Триггер:** сервис уведомлений сообщает клиенту об обновлении файлов.
+2. **Получение метаданных:** клиент получает обновлённые метаданные через API.
+3. **Скачивание блоков:** клиент скачивает обновлённые блоки с блочных серверов и восстанавливает файл.
 
 
 <div style="margin-left:3rem">
-<img src="./images/download-flow.png" alt="Upload Flow " width="600" />
+<img src="./images/download-flow.png" alt="Процесс скачивания" width="600" />
 </div>
 
 
 ---
 
-### Notification Service
-1. **Purpose:** Keeps clients updated about file changes.
-2. **Mechanism:** Implements **long polling** for asynchronous notifications.
-3. **Example:** When a file is added, edited, or deleted, notifications are pushed to all relevant clients.
+### Сервис уведомлений
+1. **Назначение:** информирует клиентов об изменениях файлов.
+2. **Механизм:** использует **длинный опрос (long polling)** для асинхронных уведомлений.
+3. **Пример:** при добавлении, редактировании или удалении файла уведомления отправляются всем соответствующим клиентам.
 
 
 ---
 
-### Storage Optimization
-1. **De-duplication:** Remove duplicate blocks at the account level using hash-based comparisons.
-2. **Versioning Strategy:**
-   - Limit the number of saved revisions.
-   - Prioritize recent versions for frequently edited files.
-3. **Cold Storage:** Move rarely accessed files to cheaper storage solutions (e.g., Amazon S3 Glacier).
+### Оптимизация хранения
+1. **Дедупликация:** удаление дублирующихся блоков на уровне аккаунта с помощью сравнения хешей.
+2. **Стратегия версионирования:**
+   - Ограничивать количество сохраняемых ревизий.
+   - Для часто редактируемых файлов отдавать приоритет последним версиям.
+3. **Холодное хранилище:** перенос редко используемых файлов в более дешёвые решения для хранения (например, Amazon S3 Glacier).
 
 ---
 
-### Failure Handling
-1. **Load Balancer Failure:** Secondary load balancer becomes active.
-2. **Block Server Failure:** Pending tasks are reassigned to other servers.
-3. **Metadata Database Failure:**
-   - Promote a slave node to master.
-   - Redirect traffic to remaining replicas.
-4. **Cloud Storage Failure:** Use cross-region replication to fetch unavailable files.
-5. **Notification Service Failure:** Clients reconnect to alternative servers.
+### Обработка отказов
+1. **Отказ балансировщика нагрузки:** активируется резервный балансировщик.
+2. **Отказ блочного сервера:** незавершённые задачи переназначаются другим серверам.
+3. **Отказ базы данных метаданных:**
+   - Повысить подчинённый узел (slave) до ведущего (master).
+   - Перенаправить трафик на оставшиеся реплики.
+4. **Отказ облачного хранилища:** использовать межрегиональную репликацию для получения недоступных файлов.
+5. **Отказ сервиса уведомлений:** клиенты переподключаются к альтернативным серверам.
 

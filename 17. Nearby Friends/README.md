@@ -1,229 +1,231 @@
-# Chapter 17: Nearby Friends
+**Русский** | [English](./README.en.md)
 
-## Introduction
+# Глава 17: Друзья поблизости (Nearby Friends)
 
-This chapter focuses on designing a scalable backend for an application which enables user to share their location and discover friends who are **nearby**.
+## Введение
 
-The major difference with the proximity chapter is that in this problem, **locations constantly change**, whereas in that one, business addresses more or less stay the same.
+В этой главе мы проектируем масштабируемый бэкенд для приложения, которое позволяет пользователю делиться своим местоположением и находить друзей, находящихся **поблизости**.
 
----
-
-## Step 1: Understand the Problem and Establish Design Scope
-
-Some questions to drive the interview:
- * C: How geographically close is considered to be "nearby"?
- * I: 5 miles, this number should be configurable
- * C: Is distance calculated as straight-line distance vs. taking into consideration eg a river in-between friends
- * I: Yes, that is a reasonable assumption
- * C: How many users does the app have?
- * I: 1bil users and 10% of them use the nearby friends feature
- * C: Do we need to store location history?
- * I: Yes, it can be valuable for eg machine learning
- * C: Can we assume inactive friends will disappear from the feature in 10min
- * I: Yes
- * C: Do we need to worry about GDPR, etc?
- * I: No, for simlicity's sake
-
-### **Functional requirements**
-
- * Users should be able to see nearby friends on their mobile app. Each friend has a distance and timestamp, indicating when the location was updated
- * Nearby friends list should be updated every few seconds
-
-### **Non-functional requirements**
-
-- **Low latency**: it's important to receive location updates without too much delay
-- **Reliability**: Occassional data point loss is acceptable, but system should be generally available
-- **Eventual consistency**: Location data store doesn't need strong consistency. Few seconds delay in receiving location data in different replicas is acceptable
-
-### **Back-of-the-envelope**
-
-Some estimations to determine potential scale:
- * Nearby friends are friends within 5mile radius
- * Location refresh interval is 30s. Human walking speed is slow, hence, no need to update location too frequently.
- * On average, 100mil users use the feature every day \w 10% concurrent users, ie 10mil
- * On average, a user has 400 friends, all of them use the nearby friends feature
- * App displays 20 nearby friends per page
- * **Location Update QPS** = 10mil / 30 == ~334k updates per second
+Главное отличие от главы о сервисе поиска ближайших объектов в том, что здесь **местоположения постоянно меняются**, тогда как там адреса заведений практически неизменны.
 
 ---
 
-## Step 2: Propose High-Level Design and Get Buy-In
+## Шаг 1: Понимание задачи и определение границ дизайна
 
-Before exploring API and data model design, we'll study the communication protocol we'll use as it's less ubiquitous than traditional request-response communication model.
+Несколько вопросов для ведения интервью (К — кандидат, И — интервьюер):
+ * К: Какое расстояние считается «поблизости»?
+ * И: 5 миль, это значение должно быть настраиваемым
+ * К: Считается ли расстояние по прямой, или нужно учитывать, например, реку между друзьями?
+ * И: По прямой — это разумное допущение
+ * К: Сколько пользователей у приложения?
+ * И: 1 млрд пользователей, 10% из них пользуются функцией «друзья поблизости»
+ * К: Нужно ли хранить историю местоположений?
+ * И: Да, она может быть полезна, например, для машинного обучения
+ * К: Можно ли считать, что неактивные друзья исчезают из списка через 10 минут?
+ * И: Да
+ * К: Нужно ли учитывать GDPR (General Data Protection Regulation — Общий регламент ЕС по защите персональных данных) и т. п.?
+ * И: Нет, для простоты
 
-### **High-level design**
+### **Функциональные требования**
 
-At a high-level we'd want to establish effective message passing between peers. This can be done via a peer-to-peer protocol, but that's not practical for a mobile app with flaky connection and tight power consumption constraints.
+ * Пользователи должны видеть друзей поблизости в мобильном приложении. Для каждого друга отображается расстояние и временная метка, показывающая, когда местоположение было обновлено
+ * Список друзей поблизости должен обновляться каждые несколько секунд
 
-A more practical approach is to use a shared backend as a fan-out mechanism towards friends you want to reach:
+### **Нефункциональные требования**
 
-<div style="margin-left:3rem">
-    <img src="./images/fan-out-backend.png" alt="fan-out-backend" width="500" />
-</div>
+- **Низкая задержка (latency)**: важно получать обновления местоположения без большой задержки
+- **Надёжность**: случайная потеря отдельных точек данных допустима, но в целом система должна быть доступна
+- **Согласованность в конечном счёте (eventual consistency)**: хранилищу данных о местоположении не нужна строгая согласованность. Задержка в несколько секунд при получении данных о местоположении разными репликами допустима
 
-What does the backend do?
- * Receives location updates from all active users
- * For each location update, find all active users which should receive it and forward it to them
- * Do not forward location data if distance between friends is beyond the configured threshold
+### **Грубая оценка (Back-of-the-envelope)**
 
-This sounds simple but the challenge is to design the system for the scale we're operating with.
-
-We'll start with a simpler design at first and discuss a more advanced approach in the deep dive:
-
-<div style="margin-left:3rem">
-    <img src="./images/simple-high-level-design.png" alt="simple-high-level-design" width="500" />
-</div>
-
-- **Load balancer**: spreads traffic across rest API servers as well as bidirectional web socket servers
-- **Rest API servers**: handles auxiliary tasks such as managing friends, updating profiles, etc
-- **Websocket servers**: stateful servers, which forward location update requests to respective clients. It also manages seeding the mobile client with nearby friends locations at initialization (discussed in detail later).
-- **Redis location cache**: used to store most recent location data for each active user. There is a TTL set on each entry in the cache. When the TTL expires, user is no longer active and their data is removed from the cache.
-- **User database**: stores user and friendship data. Either a relational or NoSQL database can be used for this purpose.
-- **Location history database**: stores a history of user location data, not necessarily used directly within nearby friends feature, but instead used to track historical data for analytical purposes
-- **Redis pubsub**: used as a lightweight message bus which enables different topics for each user channel for location updates.
-
-<div style="margin-left:3rem">
-    <img src="./images/redis-pubsub-usage.png" alt="redis-pubsub-usage" width="500" />
-</div>
-
-In the above example, websocket servers subscribe to channels for the users which are connected to them & forward location updates whenever they receive them to appropriate users.
-
-### **Periodic location update**
-
-Here's how the periodic location update flow works:
-
-<div style="margin-left:3rem">
-    <img src="./images/periodic-location-update.png" alt="periodic-location-update" width="500" />
-</div>
-
- * Mobile client sends a location update to the load balancer
- * Load balancer forwards location update to the websocket server's persistent connection for that client
- * Websocket server saves location data to location history database
- * Location data is updated in location cache. Websocket server also saves location data in-memory for subsequent distance calculations for that user
- * Websocket server publishes location data in user's channel via redis pub sub
- * Redis pubsub broadcasts location update to all subscribers for that user channel, ie servers responsible for the friends of that user
- * Subscribed web socket servers receive location update, calculate which users the update should be sent to and sends it
-
-Here's a more detailed version of the same flow:
-
-<div style="margin-left:3rem">
-    <img src="./images/detailed-periodic-location-update.png" alt="detailed-periodic-location-update" width="500" />
-</div>
-
-On average, there's going to be 40 location updates to forward as a user has 400 friends on average and 10% of them are online at a time.
-
-### **API Design**
-
-Websocket Routines we'll need to support:
- * periodic location update - user sends location data to websocket server
- * client receives location update - server sends friend location data and timestamp
- * websocket client initialization - client sends user location, server sends back nearby friends location data
- * Subscribe to a new friend - websocket server sends a friend ID mobile client is supposed to track eg when friend appears online for the first time
- * Unsubscribe a friend - websocket server sends a friend ID, mobile client is supposed to unsubscribe from due to eg friend going offline
-
-HTTP API - traditional request/response payloads for auxiliary responsibilities.
-
-### **Data model**
-
- * The location cache will store a mapping between `user_id` and `lat,long,timestamp`. Redis is a great choice for this cache as we only care about current location and it supports TTL eviction which we need for our use-case.
- * Location history table stores the same data but in a relational table \w the four columns stated above. Cassandra can be used for this data as it is optimized for write-heavy loads.
+Несколько оценок для определения потенциального масштаба:
+ * Друзья поблизости — это друзья в радиусе 5 миль
+ * Интервал обновления местоположения — 30 с. Человек ходит медленно, поэтому нет необходимости обновлять местоположение слишком часто.
+ * В среднем 100 млн пользователей пользуются функцией каждый день, из них 10% одновременно, т. е. 10 млн
+ * В среднем у пользователя 400 друзей, и все они пользуются функцией «друзья поблизости»
+ * Приложение показывает 20 друзей поблизости на странице
+ * **QPS (Queries Per Second — запросов в секунду) обновлений местоположения** = 10mil / 30 == ~334k обновлений в секунду
 
 ---
 
-## Step 3: Design Deep Dive
+## Шаг 2: Высокоуровневый дизайн и согласование
 
-Let's discuss how we scale the high-level design so that it works at the scale we're targetting.
+Прежде чем переходить к проектированию API (Application Programming Interface — программного интерфейса) и модели данных, изучим протокол взаимодействия, который будем использовать, поскольку он менее распространён, чем традиционная модель «запрос — ответ».
 
-### **How well does each component scale?**
+### **Высокоуровневый дизайн**
 
-- **API servers**: can be easily scaled via autoscaling groups and replicating server instances
-- **Websocket servers**: we can easily scale out the ws servers, but we need to ensure we gracefully shutdown existing connections when tearing down a server. Eg we can mark a server as "draining" in the load balancer and stop sending connections to it, prior to being finally removed from the server pool
-- **Client initialization**: when a client first connects to a server, it fetches the user's friends, subscribes to their channels on redis pubsub, fetches their location from cache and finally forwards to client
-- **User database**: We can shard the database based on user_id. It might also make sense to expose user/friends data via a dedicated service and API, managed by a dedicated team
-- **Location cache**: We can shard the cache easily by spinning up several redis nodes. Also, the TTL puts a limit on the max memory we could have taken up at a time. But we still want to handle the large write load
-- **Redis pub/sub server**: we leverage the fact that no memory is consumed if there are channels initialized but are not in use. Hence, we can pre-allocate channels for all users who use the nearby friends feature to avoid having to deal with eg bringing up a new channel when a user comes online and notifying active websocket servers
+На высоком уровне нам нужно организовать эффективный обмен сообщениями между участниками. Это можно сделать через peer-to-peer протокол, но для мобильного приложения с нестабильным соединением и жёсткими ограничениями по энергопотреблению это непрактично.
 
-### **Scaling deep-dive on redis pub/sub component**
-
-We will need around 200gb of memory to maintain all pub/sub channels. This can be achieved by using 2 redis servers with 100gb each.
-
-Given that we need to push ~14mil location updates per second, we will however need at least 140 redis servers to handle that amount of load, assuming that a single server can handle ~100k pushes per second.
-
-Hence, we'll need a distributed redis server cluster to handle the intense CPU load.
-
-In order to support a distributed redis cluster, we'll need to utilize a service discovery component, such as zookeeper or etcd, to keep track of which servers are alive.
-
-What we need to encode in the service discovery component is this data:
+Более практичный подход — использовать общий бэкенд как механизм рассылки (fan-out) друзьям, до которых нужно достучаться:
 
 <div style="margin-left:3rem">
-    <img src="./images/channel-distribution-data.png" alt="channel-distribution-data" width="500" />
+    <img src="./images/fan-out-backend.png" alt="fan-out через бэкенд" width="500" />
 </div>
 
-Web socket servers use that encoded data, fetched from zookeeper to determine where a particular channel lives. For efficiency, the hash ring data can be cached in-memory on each websocket server.
+Что делает бэкенд?
+ * Принимает обновления местоположения от всех активных пользователей
+ * Для каждого обновления находит всех активных пользователей, которые должны его получить, и пересылает им
+ * Не пересылает данные о местоположении, если расстояние между друзьями превышает заданный порог
 
-In terms of scaling the server cluster up or down, we can setup a daily job to scale the cluster as needed based on historical traffic data. We can also overprovision the cluster to handle spikes in loads.
+Звучит просто, но сложность в том, чтобы спроектировать систему под наш масштаб.
 
-The redis cluster can be treated as a stateful storage server as there is some state maintained for the channels and there is a need for coordination with subscribers so that they hand-off to newly provisioned nodes in the cluster.
-
-We have to be mindful of some potential issues during scaling operations:
- * There will be a lot of resubscription requests from the web socket servers due to channels being moved around
- * Some location updates might be missed from clients during the operation, which is acceptable for this problem, but we should still minimize it from happening. Consider doing such operation when traffic is at lowest point of the day.
- * We can leverage consistent hashing to minimize amount of channels moved in the event of adding/removing servers
+Начнём с более простого дизайна, а более продвинутый подход обсудим при детальном разборе:
 
 <div style="margin-left:3rem">
-    <img src="./images/consistent-hashing.png" alt="consistent-hashing" width="500" />
+    <img src="./images/simple-high-level-design.png" alt="простой высокоуровневый дизайн" width="500" />
 </div>
 
-### **Adding/removing friends**
-
-Whenever a friend is added/removed, websocket server responsible for affected user needs to subscribe/unsubscribe from the friend's channel.
-
-Since the "nearby friends" feature is part of a larger app, we can assume that a callback on the mobile client side can be registered whenever any of the events occur and the client will send a message to the websocket server to do the appropriate action.
-
-### **Users with many friends**
-
-We can put a cap on the total number of friends one can have, eg facebook has a cap of 5000 max friends.
-
-The websocket server handling the "whale" user might have a higher load on its end, but as long as we have enough web socket servers, we should be okay.
-
-### **Nearby random person**
-
-What if the interviewer wants to update the design to include a feature where we can occasionally see a random person pop up on our nearby friends map?
-
-One way to handle this is to define a pool of pubsub channels, based on geohash:
+- **Балансировщик нагрузки (Load balancer)**: распределяет трафик между REST (Representational State Transfer — архитектурный стиль веб-API) API серверами и двунаправленными WebSocket-серверами
+- **REST API серверы**: выполняют вспомогательные задачи — управление друзьями, обновление профилей и т. п.
+- **WebSocket-серверы**: серверы с состоянием (stateful), которые пересылают обновления местоположения соответствующим клиентам. Они также отвечают за начальную загрузку местоположений друзей поблизости в мобильный клиент при инициализации (подробнее — далее).
+- **Кеш местоположений в Redis**: хранит последние данные о местоположении каждого активного пользователя. Для каждой записи в кеше задан TTL (Time To Live — время жизни записи). Когда TTL истекает, пользователь считается неактивным, и его данные удаляются из кеша.
+- **База данных пользователей**: хранит данные о пользователях и дружеских связях. Для этого подходит как реляционная, так и NoSQL (Not Only SQL — нереляционная) база данных.
+- **База данных истории местоположений**: хранит историю местоположений пользователей; она не обязательно используется напрямую функцией «друзья поблизости», а служит для хранения исторических данных в аналитических целях
+- **Redis pub/sub (publish/subscribe — модель «издатель — подписчик»)**: используется как легковесная шина сообщений, позволяющая завести отдельный топик (канал) для обновлений местоположения каждого пользователя.
 
 <div style="margin-left:3rem">
-    <img src="./images/geohash-pubsub.png" alt="geohash-pubsub" width="500" />
+    <img src="./images/redis-pubsub-usage.png" alt="использование redis pub/sub" width="500" />
 </div>
 
-Anyone within the geohash subscribes to the appropriate channel to receive location updates for random users:
+В примере выше WebSocket-серверы подписываются на каналы пользователей, подключённых к ним, и при получении обновлений местоположения пересылают их нужным пользователям.
+
+### **Периодическое обновление местоположения**
+
+Вот как работает поток периодического обновления местоположения:
 
 <div style="margin-left:3rem">
-    <img src="./images/location-updates-geohash.png" alt="location-updates-geohash" width="500" />
+    <img src="./images/periodic-location-update.png" alt="периодическое обновление местоположения" width="500" />
 </div>
 
-We could also subscribe to several geohashes to handle cases where someone is close but in a bordering geohash:
+ * Мобильный клиент отправляет обновление местоположения на балансировщик нагрузки
+ * Балансировщик пересылает обновление через постоянное соединение с WebSocket-сервером этого клиента
+ * WebSocket-сервер сохраняет данные о местоположении в базу данных истории местоположений
+ * Данные о местоположении обновляются в кеше местоположений. WebSocket-сервер также сохраняет их в памяти для последующих расчётов расстояний для этого пользователя
+ * WebSocket-сервер публикует данные о местоположении в канал пользователя через Redis pub/sub
+ * Redis pub/sub рассылает обновление всем подписчикам канала пользователя, т. е. серверам, обслуживающим друзей этого пользователя
+ * Подписанные WebSocket-серверы получают обновление, вычисляют, каким пользователям его нужно отправить, и отправляют
+
+Вот более подробная версия того же потока:
 
 <div style="margin-left:3rem">
-    <img src="./images/geohash-borders.png" alt="geohash-borders" width="500" />
+    <img src="./images/detailed-periodic-location-update.png" alt="подробный поток периодического обновления местоположения" width="500" />
 </div>
 
-### **Alternative to Redis pub/sub**
+В среднем нужно будет переслать 40 обновлений местоположения, поскольку у пользователя в среднем 400 друзей и 10% из них одновременно онлайн.
 
-An alternative to using Redis for pub/sub is to leverage Erlang - a general programming language, optimized for distributed computing applications.
+### **Проектирование API**
 
-With it, we can spawn millions of small, erland processes which communicate with each other. We can handle both websocket connections and pub/sub channels within the distributed erlang application.
+WebSocket-операции, которые нужно поддерживать:
+ * периодическое обновление местоположения — пользователь отправляет данные о местоположении на WebSocket-сервер
+ * клиент получает обновление местоположения — сервер отправляет данные о местоположении друга и временную метку
+ * инициализация WebSocket-клиента — клиент отправляет местоположение пользователя, сервер возвращает данные о местоположении друзей поблизости
+ * подписка на нового друга — WebSocket-сервер отправляет ID (Identifier — идентификатор) друга, которого мобильный клиент должен отслеживать, например, когда друг впервые появляется онлайн
+ * отписка от друга — WebSocket-сервер отправляет ID друга, от которого мобильный клиент должен отписаться, например, потому что друг ушёл в офлайн
 
-A challenge with using Erlang, though, is that it's a niche programming language and it could be hard to source strong erlang developers.
+HTTP (HyperText Transfer Protocol — протокол передачи гипертекста) API — традиционные запросы/ответы для вспомогательных задач.
+
+### **Модель данных**
+
+ * Кеш местоположений хранит соответствие между `user_id` и `lat,long,timestamp`. Redis отлично подходит для этого кеша, поскольку нас интересует только текущее местоположение, а он поддерживает вытеснение по TTL, которое нужно в нашем сценарии.
+ * Таблица истории местоположений хранит те же данные, но в реляционной таблице с четырьмя указанными выше столбцами. Для этих данных можно использовать Cassandra, так как она оптимизирована под нагрузки с интенсивной записью.
 
 ---
 
-## Step 4: Wrap Up
+## Шаг 3: Детальный разбор дизайна
 
-We successfully designed a system, supporting the nearby friends features.
+Обсудим, как масштабировать высокоуровневый дизайн, чтобы он работал в целевом масштабе.
 
-Core components:
-- **Web socket servers**: real-time comms between client and server
-- **Redis**: fast read and write of location data + pub/sub channels
+### **Насколько хорошо масштабируется каждый компонент?**
 
-We also explored how to scale restful api servers, websocket servers, data layer, redis pub/sub servers and we also explored an alternative to using Redis Pub/Sub. We also explored a "random nearby person" feature.
+- **API серверы**: легко масштабируются с помощью групп автомасштабирования (autoscaling groups) и репликации экземпляров серверов
+- **WebSocket-серверы**: их легко масштабировать горизонтально, но нужно обеспечить корректное завершение (graceful shutdown) существующих соединений при выводе сервера из эксплуатации. Например, можно пометить сервер в балансировщике как «draining» и перестать направлять на него новые соединения, прежде чем окончательно удалить его из пула серверов
+- **Инициализация клиента**: когда клиент впервые подключается к серверу, тот получает список друзей пользователя, подписывается на их каналы в Redis pub/sub, получает их местоположения из кеша и, наконец, пересылает их клиенту
+- **База данных пользователей**: базу можно шардировать по user_id. Также может иметь смысл предоставлять данные о пользователях/друзьях через выделенный сервис и API, которым управляет отдельная команда
+- **Кеш местоположений**: кеш легко шардировать, подняв несколько узлов Redis. Кроме того, TTL ограничивает максимальный объём памяти, занимаемый в каждый момент времени. Но нам всё равно нужно выдерживать высокую нагрузку на запись
+- **Сервер Redis pub/sub**: используем тот факт, что созданные, но неиспользуемые каналы не потребляют память. Поэтому можно заранее создать каналы для всех пользователей функции «друзья поблизости», чтобы не приходилось, например, поднимать новый канал, когда пользователь появляется онлайн, и уведомлять об этом активные WebSocket-серверы
+
+### **Детальный разбор масштабирования Redis pub/sub**
+
+Для поддержки всех pub/sub каналов понадобится около 200 ГБ памяти. Этого можно достичь с помощью 2 серверов Redis по 100 ГБ каждый.
+
+Однако, учитывая, что нужно рассылать ~14 млн обновлений местоположения в секунду, потребуется как минимум 140 серверов Redis, чтобы выдержать такую нагрузку, при условии, что один сервер обрабатывает ~100 тыс. отправок в секунду.
+
+Следовательно, понадобится распределённый кластер серверов Redis, чтобы справиться с высокой нагрузкой на CPU (Central Processing Unit — центральный процессор).
+
+Для поддержки распределённого кластера Redis потребуется компонент обнаружения сервисов (service discovery), например ZooKeeper или etcd, чтобы отслеживать, какие серверы работают.
+
+В компоненте service discovery нужно хранить следующие данные:
+
+<div style="margin-left:3rem">
+    <img src="./images/channel-distribution-data.png" alt="данные о распределении каналов" width="500" />
+</div>
+
+WebSocket-серверы используют эти данные, полученные из ZooKeeper, чтобы определить, где находится конкретный канал. Для эффективности данные хеш-кольца (hash ring) можно кешировать в памяти на каждом WebSocket-сервере.
+
+Для масштабирования кластера вверх или вниз можно настроить ежедневную задачу, которая масштабирует кластер по мере необходимости на основе исторических данных о трафике. Также можно выделить ресурсы кластера с запасом (overprovisioning), чтобы справляться со всплесками нагрузки.
+
+Кластер Redis можно рассматривать как сервер хранения с состоянием (stateful), поскольку для каналов хранится определённое состояние и требуется координация с подписчиками, чтобы они переключались на новые узлы кластера.
+
+При масштабировании нужно помнить о возможных проблемах:
+ * Из-за перемещения каналов от WebSocket-серверов будет поступать много запросов на повторную подписку
+ * Во время операции часть обновлений местоположения от клиентов может быть потеряна; для этой задачи это допустимо, но всё же стоит минимизировать такие потери. Имеет смысл проводить такие операции, когда трафик минимален в течение суток.
+ * Можно использовать консистентное хеширование (consistent hashing), чтобы минимизировать количество перемещаемых каналов при добавлении/удалении серверов
+
+<div style="margin-left:3rem">
+    <img src="./images/consistent-hashing.png" alt="консистентное хеширование" width="500" />
+</div>
+
+### **Добавление/удаление друзей**
+
+Когда друг добавляется или удаляется, WebSocket-сервер, отвечающий за затронутого пользователя, должен подписаться на канал друга или отписаться от него.
+
+Поскольку функция «друзья поблизости» — часть более крупного приложения, можно предположить, что на стороне мобильного клиента можно зарегистрировать callback на любое из этих событий, и клиент отправит WebSocket-серверу сообщение для выполнения соответствующего действия.
+
+### **Пользователи с большим количеством друзей**
+
+Можно ограничить общее количество друзей у одного пользователя, например, у Facebook лимит — 5000 друзей.
+
+WebSocket-сервер, обслуживающий такого пользователя-«кита» (whale), может испытывать повышенную нагрузку, но при достаточном количестве WebSocket-серверов это не проблема.
+
+### **Случайный человек поблизости**
+
+Что если интервьюер захочет доработать дизайн, добавив функцию, при которой на карте друзей поблизости время от времени появляется случайный человек?
+
+Один из способов — определить пул pub/sub каналов на основе geohash:
+
+<div style="margin-left:3rem">
+    <img src="./images/geohash-pubsub.png" alt="pub/sub по geohash" width="500" />
+</div>
+
+Каждый, кто находится в пределах geohash, подписывается на соответствующий канал, чтобы получать обновления местоположения случайных пользователей:
+
+<div style="margin-left:3rem">
+    <img src="./images/location-updates-geohash.png" alt="обновления местоположения по geohash" width="500" />
+</div>
+
+Можно также подписываться на несколько geohash, чтобы учесть случаи, когда кто-то находится рядом, но в соседнем geohash:
+
+<div style="margin-left:3rem">
+    <img src="./images/geohash-borders.png" alt="границы geohash" width="500" />
+</div>
+
+### **Альтернатива Redis pub/sub**
+
+Альтернатива использованию Redis для pub/sub — Erlang, язык программирования общего назначения, оптимизированный для распределённых вычислительных приложений.
+
+С его помощью можно запускать миллионы небольших процессов Erlang, взаимодействующих друг с другом. В распределённом приложении на Erlang можно обрабатывать как WebSocket-соединения, так и pub/sub каналы.
+
+Однако сложность с Erlang в том, что это нишевый язык программирования, и найти сильных Erlang-разработчиков может быть непросто.
+
+---
+
+## Шаг 4: Подведение итогов
+
+Мы успешно спроектировали систему, поддерживающую функцию «друзья поблизости».
+
+Ключевые компоненты:
+- **WebSocket-серверы**: взаимодействие между клиентом и сервером в реальном времени
+- **Redis**: быстрое чтение и запись данных о местоположении + pub/sub каналы
+
+Мы также рассмотрели, как масштабировать RESTful API серверы, WebSocket-серверы, слой данных и серверы Redis pub/sub, а также изучили альтернативу Redis pub/sub. Кроме того, мы рассмотрели функцию «случайный человек поблизости».
