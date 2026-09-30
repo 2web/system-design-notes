@@ -38,6 +38,19 @@ Check the notes here: https://pagefy.io/system-design/system-design-interview-by
  * [Chapter 27 - Digital Wallet](./27.%20%20Digital%20Wallet/README.en.md)
  * [Chapter 28 - Stock Exchange](./28.%20Stock%20Exchange/README.en.md)
 
+### Additional chapters (not from the book, compiled from public sources, 2026)
+
+ * [Chapter 29 - LLM Inference Serving](./29.%20LLM%20Inference%20Serving/README.en.md)
+ * [Chapter 30 - Vector Search and RAG](./30.%20Vector%20Search%20and%20RAG/README.en.md)
+ * [Chapter 31 - AI Agent Platform](./31.%20AI%20Agent%20Platform/README.en.md)
+ * [Chapter 32 - Recommendation System](./32.%20Recommendation%20System/README.en.md)
+ * [Chapter 33 - Feature Store](./33.%20Feature%20Store/README.en.md)
+ * [Chapter 34 - Collaborative Editor (Google Docs)](./34.%20Collaborative%20Editor/README.en.md)
+ * [Chapter 35 - Ride-Sharing Service (Uber/Lyft)](./35.%20Ride-Sharing%20Service/README.en.md)
+ * [Chapter 36 - Ticket Booking System (Ticketmaster)](./36.%20Ticket%20Booking%20System/README.en.md)
+ * [Chapter 37 - Distributed Task Scheduler](./37.%20Distributed%20Task%20Scheduler/README.en.md)
+ * [Chapter 38 - Distributed Cache](./38.%20Distributed%20Cache/README.en.md)
+
 
 # Additonal Resources
 
