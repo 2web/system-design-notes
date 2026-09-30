@@ -1,76 +1,78 @@
-# Chapter 22: Hotel Reservation System
+**Русский** | [English](./README.en.md)
 
-## Introduction
-In this chapter, we're designing a **hotel reservation system**, similar to Marriott International.
+# Глава 22: Система бронирования отелей
 
-Applicable to other types of systems as well - Airbnb, flight reservation, movie ticket booking.
+## Введение
+В этой главе мы проектируем **систему бронирования отелей (hotel reservation system)**, похожую на Marriott International.
+
+Подход применим и к другим типам систем — Airbnb, бронированию авиабилетов, продаже билетов в кино.
 
 ---
 
-## Step 1: Understand the Problem and Establish Design Scope
-Before diving into designing the system, we should ask the interviewer questions to clarify the scope:
- - C: What is the scale of the system?
- - I: We're building a website for a hotel chain \w 5000 hotels and 1mil rooms
- - C: Do customers pay when they make a reservation or when they arrive at the hotel?
- - I: They pay in full when making reservations.
- - C: Do customers book hotel rooms through the website only? Do we have to support other reservation options such as phone calls?
- - I: They make bookings through the website or app only.
- - C: Can customers cancel reservations?
- - I: Yes
- - C: Other things to consider?
- - I: Yes, we allow overbooking by 10%. Hotel will sell more rooms than there actually are. Hotels do this in anticipation that clients will cancel bookings.
- - C: Since not much time, we'll focus on - show hotel-related page, hotel-room details page, reserve a room, admin panel, support overbooking.
- - I: Sounds good.
- - I: One more thing - hotel prices change all the time. Assume a hotel room's price changes every day.
- - C: OK.
+## Шаг 1: Понять задачу и определить рамки проектирования
+Прежде чем переходить к проектированию системы, стоит задать интервьюеру вопросы, чтобы уточнить рамки:
+ - К: Каков масштаб системы?
+ - И: Мы делаем сайт для сети отелей с 5000 отелей и 1 млн номеров
+ - К: Клиенты платят при бронировании или по прибытии в отель?
+ - И: Они оплачивают полную стоимость при бронировании.
+ - К: Клиенты бронируют номера только через сайт? Нужно ли поддерживать другие способы бронирования, например по телефону?
+ - И: Бронирование только через сайт или приложение.
+ - К: Могут ли клиенты отменять бронирования?
+ - И: Да
+ - К: Что-то ещё нужно учесть?
+ - И: Да, мы допускаем овербукинг (overbooking) на 10%. Отель продаёт больше номеров, чем есть на самом деле. Отели делают так в расчёте на то, что клиенты будут отменять бронирования.
+ - К: Поскольку времени немного, сосредоточимся на следующем: страница отеля, страница с деталями номера, бронирование номера, админ-панель, поддержка овербукинга.
+ - И: Звучит хорошо.
+ - И: И ещё одно — цены на отели постоянно меняются. Предположим, что цена номера меняется каждый день.
+ - К: Хорошо.
 
-### **Non-functional requirements**
- - Support high concurrency - there might be a lot of customers trying to book the same hotel during peak season.
- - Moderate latency - it's ideal to have low latency when a user makes a reservation, but it's acceptable if the system takes a few seconds to process it.
+### **Нефункциональные требования**
+ - Поддержка высокой конкурентности — в пиковый сезон много клиентов могут одновременно пытаться забронировать один и тот же отель.
+ - Умеренная задержка — в идеале бронирование должно проходить с низкой задержкой, но допустимо, если система обрабатывает его несколько секунд.
 
-### **Back-of-the-envelope estimation**
- - 5000 hotels and 1mil rooms in total
- - Assume 70% of rooms are occupied and average stay duration is 3 days
- - Estimated daily reservations - 1mil * 0.7 / 3 = ~240k reservations per day
- - Reservations per second - 240k / 10^5 seconds in a day = ~3. Average reservation TPS is low.
+### **Оценка «на салфетке» (back-of-the-envelope estimation)**
+ - Всего 5000 отелей и 1 млн номеров
+ - Предположим, что занято 70% номеров, а средняя продолжительность проживания — 3 дня
+ - Оценка ежедневных бронирований: 1 млн * 0,7 / 3 = ~240 тыс. бронирований в день
+ - Бронирований в секунду: 240 тыс. / 10^5 секунд в сутках = ~3. Средний TPS (Transactions Per Second — транзакций в секунду) бронирований невысок.
 
-Let's estimate the QPS. If we assume that there are three steps to reach the reservation page and there is a 10% conversion rate per page,
-we can estimate that if there are 3 reservations, then there must be 30 views of reservation page and 300 views of hotel room detail page.
+Оценим QPS (Queries Per Second — запросов в секунду). Если предположить, что до страницы бронирования нужно пройти три шага, а конверсия на каждой странице — 10%,
+то при 3 бронированиях должно быть 30 просмотров страницы бронирования и 300 просмотров страницы с деталями номера.
 
 <div style="margin-left:3rem">
-    <img src="./images/qps-estimation.png" alt="qps-estimation" width="500" />
+    <img src="./images/qps-estimation.png" alt="оценка QPS" width="500" />
 </div>
 
 ---
 
-## Step 2: Propose High-Level Design and Get Buy-In
-We'll explore - API Design, Data model, high-level design.
+## Шаг 2: Предложить высокоуровневый дизайн и получить одобрение
+Рассмотрим дизайн API (Application Programming Interface — программный интерфейс), модель данных и высокоуровневый дизайн.
 
-### **API Design**
-This API Design focuses on the core endpoints (using RESTful practices), we'll need in order to support a hotel reservation system.
+### **Дизайн API**
+Этот дизайн API охватывает основные эндпоинты (в стиле RESTful, т. е. следующие принципам REST — Representational State Transfer, архитектурный стиль веб-API), необходимые для работы системы бронирования отелей.
 
-A fully-fledged system would require a more extensive API with support for searching for rooms based on lots of criteria, but we won't be focusing on that in this section.
-Reason is that they aren't technically challenging, so they're out of scope.
+Полноценной системе понадобился бы более обширный API с поддержкой поиска номеров по множеству критериев, но в этом разделе мы на этом не будем останавливаться.
+Причина в том, что технически это несложно, поэтому выходит за рамки задачи.
 
-**Hotel-related API**
- - `GET /v1/hotels/{id}` - get detailed info about a hotel
- - `POST /v1/hotels` - add a new hotel. Only available to ops
- - `PUT /v1/hotels/{id}` - update hotel info. Only available to ops
- - `DELETE /v1/hotels/{id}` - delete a hotel. API is only available to ops
+**API для отелей**
+ - `GET /v1/hotels/{id}` — получить подробную информацию об отеле
+ - `POST /v1/hotels` — добавить новый отель. Доступно только сотрудникам эксплуатации (ops, от operations)
+ - `PUT /v1/hotels/{id}` — обновить информацию об отеле. Доступно только ops
+ - `DELETE /v1/hotels/{id}` — удалить отель. API доступен только ops
 
-**Room-related API**
- - `GET /v1/hotels/{id}/rooms/{id}` - get detailed information about a room
- - `POST /v1/hotels/{id}/rooms` - Add a room. Only available to ops
- - `PUT /v1/hotels/{id}/rooms/{id}` - Update room info. Only available to ops
- - `DELETE /v1/hotels/{id}/rooms/{id}` - Delete a room. Only available to ops
+**API для номеров**
+ - `GET /v1/hotels/{id}/rooms/{id}` — получить подробную информацию о номере
+ - `POST /v1/hotels/{id}/rooms` — добавить номер. Доступно только ops
+ - `PUT /v1/hotels/{id}/rooms/{id}` — обновить информацию о номере. Доступно только ops
+ - `DELETE /v1/hotels/{id}/rooms/{id}` — удалить номер. Доступно только ops
 
-**Reservation-related API**
- - `GET /v1/reservations` - get reservation history of current user
- - `GET /v1/reservations/{id}` - get detailed info about a reservation
- - `POST /v1/reservations` - make a new reservation
- - `DELETE /v1/reservations/{id}` - cancel a reservation
+**API для бронирований**
+ - `GET /v1/reservations` — получить историю бронирований текущего пользователя
+ - `GET /v1/reservations/{id}` — получить подробную информацию о бронировании
+ - `POST /v1/reservations` — создать новое бронирование
+ - `DELETE /v1/reservations/{id}` — отменить бронирование
 
-Here's an example request to make a reservation:
+Вот пример запроса на создание бронирования:
 
 ```
 {
@@ -82,75 +84,76 @@ Here's an example request to make a reservation:
 }
 ```
 
-Note that the `reservationID` is an idempotency key to avoid double booking. Details explained in [concurrency section](#concurrency-issues)
+Обратите внимание, что `reservationID` — это ключ идемпотентности (idempotency key), позволяющий избежать двойного бронирования. Подробности — в [разделе о конкурентности](#concurrency-issues)
 
-### **Data model**
-Before we choose what database to use, let's consider our access patterns.
+### **Модель данных**
+Прежде чем выбирать базу данных, рассмотрим паттерны доступа к данным.
 
-We need to support the following queries:
- - View detailed info about a hotel
- - Find available types of rooms given a date range
- - Record a reservation
- - Look up a reservation or past history of reservations
+Нам нужно поддерживать следующие запросы:
+ - Просмотр подробной информации об отеле
+ - Поиск доступных типов номеров на заданный диапазон дат
+ - Запись бронирования
+ - Просмотр бронирования или истории прошлых бронирований
 
-From our estimations, we know the scale of the system is not large, but we need to prepare for traffic surges.
+Из наших оценок видно, что масштаб системы невелик, но нужно быть готовыми к всплескам трафика.
 
-Given this knowledge, we'll choose a relational database because:
- - Relational DBs work well with read-heavy and less write-heavy systems.
- - NoSQL databases are normally optimized for writes, but we know we won't have many as only a fraction of users who visit the site make a reservation.
- - Relational DBs provide ACID guarantees. These are important for such a system as without them, we won't be able to prevent problems such as negative balance, double charge, etc.
- - Relational DBs can easily model the data as the structure is very clear.
+Исходя из этого, выберем реляционную базу данных, потому что:
+ - Реляционные БД хорошо подходят для систем с преобладанием чтения и относительно небольшим объёмом записи.
+ - NoSQL-базы (Not Only SQL — нереляционные базы данных) обычно оптимизированы под запись, но у нас записей будет немного, поскольку бронирование делает лишь малая часть посетителей сайта.
+ - Реляционные БД дают гарантии ACID (Atomicity, Consistency, Isolation, Durability — атомарность, согласованность, изолированность, долговечность транзакций). Для такой системы они важны: без них мы не сможем предотвратить такие проблемы, как отрицательный баланс, двойное списание и т. д.
+ - В реляционных БД легко смоделировать данные, поскольку их структура очень понятна.
 
-Here is our schema design:
-
-<div style="margin-left:3rem">
-    <img src="./images/schema-design.png" alt="schema-design" width="500" />
-</div>
-
-Most fields are self-explanatory. Only field worth mentioning is the `status` field which represents the state machine of a given room:
+Вот наша схема:
 
 <div style="margin-left:3rem">
-    <img src="./images/status-state-machine.png" alt="status-state-machine" width="500" />
+    <img src="./images/schema-design.png" alt="дизайн схемы" width="500" />
 </div>
 
-This data model works well for a system like Airbnb, but not for hotels where users don't reserve a particular room but a room type.
-They reserve a type of room and a room number is chosen at the point of reservation.
-
-This shortcoming will be addressed in the [Improved Data Model](#improved-data-model) section.
-
-### **High-level Design**
-We've chosen a microservice architecture for this design. It has gained great popularity in recent years:
+Большинство полей говорят сами за себя. Упомянуть стоит лишь поле `status`, которое отражает конечный автомат (state machine) состояний номера:
 
 <div style="margin-left:3rem">
-    <img src="./images/high-level-design.png" alt="high-level-design" width="500" />
+    <img src="./images/status-state-machine.png" alt="конечный автомат статусов" width="500" />
 </div>
 
- - **Users**: book a hotel room on their phone or computer
- - **Admin**: perform administrative functions such as refunding/cancelling a payment, etc
- - **CDN**: caches static resources such as JS bundles, images, videos, etc
- - **Public API Gateway**: fully-managed service which supports rate limiting, authentication, etc.
- - **Internal APIs**: only visible to authorized personnel. Usually protected by a VPN.
- - **Hotel service**: provides detailed information about hotels and rooms. Hotel and room data is static, so it can be cached aggressively.
- - **Rate service**: provides room rates for different future dates. An interesting note about this domain is that prices depend on how full a hotel is at a given day.
- - **Reservation service**: receives reservation requests and reserves hotel rooms. Also tracks room inventory as reservations are made/cancelled.
- - **Payment service**: processes payments and updates reservation statuses on success.
- - **Hotel management service**: available to authorized personnel only. Allows certain administrative functions for managing and viewing reservations, hotels, etc.
+Эта модель данных хорошо подходит для системы вроде Airbnb, но не для отелей, где пользователи бронируют не конкретный номер, а тип номера.
+Они бронируют тип номера, а конкретный номер назначается в момент бронирования.
 
-Inter-service communication can be facilitated via a RPC framework, such as gRPC.
+Этот недостаток будет устранён в разделе [Улучшенная модель данных](#improved-data-model).
+
+### **Высокоуровневый дизайн**
+Для этого дизайна мы выбрали микросервисную архитектуру. В последние годы она приобрела большую популярность:
+
+<div style="margin-left:3rem">
+    <img src="./images/high-level-design.png" alt="высокоуровневый дизайн" width="500" />
+</div>
+
+ - **Пользователи**: бронируют номер в отеле с телефона или компьютера
+ - **Администратор**: выполняет административные функции, например возврат/отмену платежа и т. д.
+ - **CDN** (Content Delivery Network — сеть доставки контента): кэширует статические ресурсы — JS-бандлы (JavaScript), изображения, видео и т. д.
+ - **Публичный API Gateway**: полностью управляемый сервис с поддержкой rate limiting, аутентификации и т. д.
+ - **Внутренние API**: видны только авторизованному персоналу. Обычно защищены VPN (Virtual Private Network — виртуальная частная сеть).
+ - **Сервис отелей (Hotel service)**: предоставляет подробную информацию об отелях и номерах. Данные об отелях и номерах статичны, поэтому их можно агрессивно кэшировать.
+ - **Сервис тарифов (Rate service)**: предоставляет цены на номера на разные будущие даты. Интересная особенность этой предметной области — цены зависят от того, насколько заполнен отель в конкретный день.
+ - **Сервис бронирования (Reservation service)**: принимает запросы на бронирование и резервирует номера. Также отслеживает инвентарь номеров по мере создания/отмены бронирований.
+ - **Платёжный сервис (Payment service)**: обрабатывает платежи и при успехе обновляет статусы бронирований.
+ - **Сервис управления отелями (Hotel management service)**: доступен только авторизованному персоналу. Предоставляет административные функции для управления и просмотра бронирований, отелей и т. д.
+
+Взаимодействие между сервисами можно организовать через RPC-фреймворк (Remote Procedure Call — удалённый вызов процедур), например gRPC.
 
 ---
 
-## Step 3: Design Deep Dive
-Let's dive deeper into:
- - Improved data model
- - Concurrency issues
- - Scalability
- - Resolving data inconsistency in microservices
+## Шаг 3: Детальная проработка дизайна
+Углубимся в следующие темы:
+ - Улучшенная модель данных
+ - Проблемы конкурентности
+ - Масштабируемость
+ - Устранение несогласованности данных в микросервисах
 
-### **Improved data model**
-As mentioned in a previous section, we need to amend our API and schema to enable reserving a type of room vs. a particular one.
+<a id="improved-data-model"></a>
+### **Улучшенная модель данных**
+Как упоминалось в предыдущем разделе, нужно доработать API и схему, чтобы можно было бронировать тип номера, а не конкретный номер.
 
-For the reservation API, we no longer reserve a `roomID`, but we reserve a `roomTypeID`:
+В API бронирования мы теперь резервируем не `roomID`, а `roomTypeID`:
 
 ```
 POST /v1/reservations
@@ -164,30 +167,30 @@ POST /v1/reservations
 }
 ```
 
-Here's the updated schema:
+Вот обновлённая схема:
 
 <div style="margin-left:3rem">
-    <img src="./images/updated-schema.png" alt="updated-schema" width="500" />
+    <img src="./images/updated-schema.png" alt="обновлённая схема" width="500" />
 </div>
 
- - **room**: contains information about a room
- - **room_type_rate**: contains information about prices for a given room type
- - **reservation**: records guest reservation data
- - **room_type_inventory**: stores inventory data about hotel rooms. 
+ - **room**: содержит информацию о номере
+ - **room_type_rate**: содержит информацию о ценах для заданного типа номера
+ - **reservation**: хранит данные о бронированиях гостей
+ - **room_type_inventory**: хранит данные об инвентаре номеров отеля.
 
-Let's take a look at the `room_type_inventory` columns as that table is more interesting:
- - **hotel_id**: id of hotel
- - **room_type_id**: id of a room type
- - **date**: a single date
- - **total_inventory**: total number of rooms minus those that are temporarily taken off the inventory.
- - **total_reserved**: total number of rooms booked for given (hotel_id, room_type_id, date)
+Рассмотрим столбцы `room_type_inventory`, так как эта таблица интереснее остальных:
+ - **hotel_id**: id (identifier — идентификатор) отеля
+ - **room_type_id**: id типа номера
+ - **date**: одна дата
+ - **total_inventory**: общее количество номеров за вычетом временно выведенных из инвентаря.
+ - **total_reserved**: общее количество забронированных номеров для заданной комбинации (hotel_id, room_type_id, date)
 
-There are alternative ways to design this table, but having one room per (hotel_id, room_type_id, date) enables easy 
-reservation management and easier queries.
+Эту таблицу можно спроектировать и по-другому, но одна строка на каждую комбинацию (hotel_id, room_type_id, date) упрощает
+управление бронированиями и запросы.
 
-The rows in the table are pre-populated using a daily CRON job.
+Строки в таблице заполняются заранее ежедневным CRON-заданием.
 
-Sample data:
+Пример данных:
 | hotel_id | room_type_id | date       | total_inventory | total_reserved |
 |----------|--------------|------------|-----------------|----------------|
 | 211      | 1001         | 2021-06-01 | 100             | 80             |
@@ -199,7 +202,7 @@ Sample data:
 | 2210     | 101          | 2021-06-01 | 30              | 23             |
 | 2210     | 101          | 2021-06-02 | 30              | 25             |
 
-Sample SQL query to check the availability of a type of room:
+Пример SQL-запроса (Structured Query Language — язык структурированных запросов) для проверки доступности типа номера:
 
 ```
 SELECT date, total_inventory, total_reserved
@@ -208,75 +211,76 @@ WHERE room_type_id = ${roomTypeId} AND hotel_id = ${hotelId}
 AND date between ${startDate} and ${endDate}
 ```
 
-How to check availability for a specified number of rooms using that data (note that we support overbooking):
+Как по этим данным проверить доступность заданного количества номеров (учитывая, что мы поддерживаем овербукинг):
 
 ```
 if (total_reserved + ${numberOfRoomsToReserve}) <= 110% * total_inventory
 ```
 
-Now let's do some estimation about the storage volume.
- - We have 5000 hotels.
- - Each hotel has 20 types of rooms.
- - 5000 * 20 * 2 (years) * 365 (days) = 73mil rows
+Теперь оценим объём хранилища.
+ - У нас 5000 отелей.
+ - В каждом отеле 20 типов номеров.
+ - 5000 * 20 * 2 (года) * 365 (дней) = 73 млн строк
 
-73 million rows is not a lot of data and a single database server can handle it.
-It makes sense, however, to setup read replication (potentially across different zones) to enable high availability.
+73 млн строк — это немного, с таким объёмом справится один сервер БД.
+Тем не менее имеет смысл настроить репликацию для чтения (возможно, между разными зонами) для обеспечения высокой доступности.
 
-Follow-up question - if reservation data is too large for a single database, what would you do?
- - Store only current and future reservation data. Reservation history can be moved to cold storage.
- - Database sharding - we can shard our data by `hash(hotel_id) % servers_cnt` as we always select the `hotel_id` in our queries.
+Дополнительный вопрос: что делать, если данные о бронированиях слишком велики для одной базы?
+ - Хранить только текущие и будущие бронирования. Историю бронирований можно перенести в холодное хранилище.
+ - Шардирование базы данных — можно шардировать данные по `hash(hotel_id) % servers_cnt`, поскольку `hotel_id` всегда присутствует в наших запросах.
 
-### **Concurrency issues**
-Another important problem to address is double booking.
+<a id="concurrency-issues"></a>
+### **Проблемы конкурентности**
+Ещё одна важная проблема, которую нужно решить, — двойное бронирование.
 
-There are two issues to address:
- - Same user clicks on "book" twice
- - Multiple users try to book a room at the same time
+Здесь две проблемы:
+ - Один и тот же пользователь дважды нажимает «забронировать»
+ - Несколько пользователей одновременно пытаются забронировать один номер
 
-Here's a visualization of the first problem:
-
-<div style="margin-left:3rem">
-    <img src="./images/double-booking-single-user.png" alt="double-booking-single-user" width="500" />
-</div>
-
-There are two approaches to solving this problem:
- - Client-side handling - front-end can disable the book button once clicked. If a user disabled javascript, however, they won't see the button becoming grayed out.
- - Idemptent API - Add an idempotency key to the API, which enables a user to execute an action once, regardless of how many times the endpoint is invoked:
+Вот визуализация первой проблемы:
 
 <div style="margin-left:3rem">
-    <img src="./images/idempotency.png" alt="idempotency" width="500" />
+    <img src="./images/double-booking-single-user.png" alt="двойное бронирование одним пользователем" width="500" />
 </div>
 
-Here's how this flow works:
- - A reservation order is generated once you're in the process of filling in your details and making a booking. The reservation order is generated using a globally unique identifier.
- - Submit reservation 1 using the `reservation_id` generated in the previous step.
- - If "complete booking" is clicked a second time, the same `reservation_id` is sent and the backend detects that this is a duplicate reservation.
- - The duplication is avoided by making the `reservation_id` column have a unique constraint, preventing multiple records with that id being stored in the DB.
+Есть два подхода к решению этой проблемы:
+ - Обработка на стороне клиента — фронтенд может блокировать кнопку бронирования после нажатия. Однако если у пользователя отключён JavaScript, кнопка не станет неактивной.
+ - Идемпотентный API — добавить в API ключ идемпотентности, который позволяет пользователю выполнить действие один раз, независимо от того, сколько раз вызван эндпоинт:
 
 <div style="margin-left:3rem">
-    <img src="./images/unique-constraint-violation.png" alt="unique-constraint-violation" width="500" />
+    <img src="./images/idempotency.png" alt="идемпотентность" width="500" />
 </div>
 
-What if there are multiple users making the same reservation?
+Вот как работает этот процесс:
+ - Заказ на бронирование создаётся, когда вы заполняете свои данные и оформляете бронирование. Для заказа генерируется глобально уникальный идентификатор.
+ - Бронирование 1 отправляется с `reservation_id`, сгенерированным на предыдущем шаге.
+ - Если «завершить бронирование» нажать второй раз, отправится тот же `reservation_id`, и бэкенд определит, что это дубликат.
+ - Дублирования удаётся избежать благодаря ограничению уникальности (unique constraint) на столбце `reservation_id`, которое не позволяет сохранить в БД несколько записей с одинаковым id.
 
 <div style="margin-left:3rem">
-    <img src="./images/double-booking-multiple-users.png" alt="double-booking-multiple-users" width="500" />
+    <img src="./images/unique-constraint-violation.png" alt="нарушение ограничения уникальности" width="500" />
 </div>
 
- - Let's assume the transaction isolation level is not serializable
- - User 1 and 2 attempt to book the same room at the same time.
- - Transaction 1 checks if there are enough rooms - there are
- - Transaction 2 check if there are enough rooms - there are
- - Transaction 2 reserves the room and updates the inventory
- - Transaction 1 also reserves the room as it still sees there are 99 `total_reserved` rooms out of 100.
- - Both transactions successfully commit the changes
+А что если одно и то же бронирование делают несколько пользователей?
 
-This problem can be solved using some form of locking mechanism:
- - Pessimistic locking
- - Optimistic locking
- - Database constraints
+<div style="margin-left:3rem">
+    <img src="./images/double-booking-multiple-users.png" alt="двойное бронирование несколькими пользователями" width="500" />
+</div>
 
-Here's the SQL we use to reserve a room:
+ - Предположим, что уровень изоляции транзакций не serializable
+ - Пользователи 1 и 2 одновременно пытаются забронировать один и тот же номер.
+ - Транзакция 1 проверяет, достаточно ли номеров, — достаточно
+ - Транзакция 2 проверяет, достаточно ли номеров, — достаточно
+ - Транзакция 2 бронирует номер и обновляет инвентарь
+ - Транзакция 1 тоже бронирует номер, поскольку всё ещё видит, что `total_reserved` равно 99 из 100.
+ - Обе транзакции успешно коммитят изменения
+
+Эту проблему можно решить с помощью того или иного механизма блокировок:
+ - Пессимистичная блокировка (pessimistic locking)
+ - Оптимистичная блокировка (optimistic locking)
+ - Ограничения базы данных (database constraints)
+
+Вот SQL, который мы используем для бронирования номера:
 
 ```sql
 # step 1: check room inventory
@@ -299,166 +303,166 @@ AND date between ${startDate} and ${endDate}
 Commit
 ```
 
-#### Option 1: Pessimistic locking
-Pessimistic locking prevents simultaneous updates by putting a lock on a record while it's being updated.
+#### Вариант 1: Пессимистичная блокировка
+Пессимистичная блокировка предотвращает одновременные обновления, устанавливая блокировку на запись на время её обновления.
 
-This can be done in MySQL by using the `SELECT... FOR UPDATE` query, which locks the rows selected by the query until the transaction is committed.
-
-<div style="margin-left:3rem">
-    <img src="./images/pessimistic-locking.png" alt="pessimistic-locking" width="500" />
-</div>
-
-Pros:
- - Prevents applications from updating data that is being changed
- - Easy to implement and avoids conflict by serializing updates. Useful when there is heavy data contention.
-
-Cons:
- - Deadlocks may occur when multiple resources are locked.
- - This approach is not scalable - if transaction is locked for too long, this has impact on all other transactions trying to access the resource.
- - The impact is severe when the query selects a lot of resources and the transaction is long-lived.
-
-The author doesn't recommend this approach due to its scalability issues.
-
-#### Option 2: Optimistic locking
-Optimistic locking allows multiple users to attempt to update a record at the same time.
-
-There are two common ways to implement it - version numbers and timestamps. Version numbers are recommended as server clocks can be inaccurate.
+В MySQL это можно сделать с помощью запроса `SELECT... FOR UPDATE`, который блокирует выбранные строки до коммита транзакции.
 
 <div style="margin-left:3rem">
-    <img src="./images/optimistic-locking.png" alt="optimistic-locking" width="500" />
+    <img src="./images/pessimistic-locking.png" alt="пессимистичная блокировка" width="500" />
 </div>
 
- - A new `version` column is added to the database table
- - Before a user modifies a database row, the version number is read
- - When the user updates the row, the version number is increased by 1 and written back to the database
- - Database validation prevents the insert if the new version number doesn't exceed the previous one
+Плюсы:
+ - Не позволяет приложениям обновлять данные, которые в этот момент изменяются
+ - Просто реализовать; конфликты исключаются за счёт сериализации обновлений. Полезно при высокой конкуренции за данные (data contention).
 
-Optimistic locking is usually faster than pessimistic locking as we're not locking the database. 
-Its performance tends to degrade when concurrency is high, however, as that leads to a lot of rollbacks.
+Минусы:
+ - При блокировке нескольких ресурсов возможны взаимоблокировки (deadlocks).
+ - Подход плохо масштабируется: если транзакция держит блокировку слишком долго, это влияет на все остальные транзакции, обращающиеся к ресурсу.
+ - Влияние особенно сильное, когда запрос выбирает много ресурсов, а транзакция долгоживущая.
 
-Pros:
- - It prevents applications from editing stale data
- - We don't need to acquire a lock in the database
- - Preferred option when data contention is low, ie rarely are there update conflicts
+Автор не рекомендует этот подход из-за проблем с масштабируемостью.
 
-Cons:
- - Performance is poor when data contention is high
+#### Вариант 2: Оптимистичная блокировка
+Оптимистичная блокировка позволяет нескольким пользователям одновременно пытаться обновить запись.
 
-Optimistic locking is a good option for our system as reservation QPS is not extremely high.
+Есть два распространённых способа её реализации — номера версий и временные метки. Рекомендуются номера версий, поскольку серверные часы могут быть неточными.
 
-#### Option 3: Database constraints
-This approach is very similar to optimistic locking, but the guardrails are implemented using a database constraint:
+<div style="margin-left:3rem">
+    <img src="./images/optimistic-locking.png" alt="оптимистичная блокировка" width="500" />
+</div>
+
+ - В таблицу базы данных добавляется новый столбец `version`
+ - Перед изменением строки пользователь считывает номер версии
+ - При обновлении строки номер версии увеличивается на 1 и записывается обратно в базу
+ - Валидация на уровне БД не допускает вставку, если новый номер версии не превышает предыдущий
+
+Оптимистичная блокировка обычно быстрее пессимистичной, поскольку мы не блокируем базу данных.
+Однако при высокой конкурентности её производительность, как правило, падает, так как это приводит к большому количеству откатов.
+
+Плюсы:
+ - Не позволяет приложениям редактировать устаревшие данные
+ - Не нужно захватывать блокировку в базе данных
+ - Предпочтительный вариант при низкой конкуренции за данные, т. е. когда конфликты обновлений редки
+
+Минусы:
+ - Низкая производительность при высокой конкуренции за данные
+
+Оптимистичная блокировка — хороший вариант для нашей системы, поскольку QPS бронирований не так уж высок.
+
+#### Вариант 3: Ограничения базы данных
+Этот подход очень похож на оптимистичную блокировку, но защита реализуется с помощью ограничения базы данных:
 
 ```
 CONSTRAINT `check_room_count` CHECK((`total_inventory - total_reserved` >= 0))
 ```
 
 <div style="margin-left:3rem">
-    <img src="./images/database-constraint.png" alt="database-constraint" width="500" />
+    <img src="./images/database-constraint.png" alt="ограничение базы данных" width="500" />
 </div>
 
-Pros:
- - Easy to implement
- - Works well when data contention is small
+Плюсы:
+ - Просто реализовать
+ - Хорошо работает при низкой конкуренции за данные
 
-Cons:
- - Similar to optimistic locking, performs poorly when data contention is high
- - Database constraints cannot be easily version-controlled like application code
- - Not all databases support constraints
+Минусы:
+ - Как и оптимистичная блокировка, плохо работает при высокой конкуренции за данные
+ - Ограничения базы данных сложнее держать под контролем версий, чем код приложения
+ - Не все базы данных поддерживают ограничения
 
-This is another good option for a hotel reservation system due to its ease of implementation.
+Это ещё один хороший вариант для системы бронирования отелей благодаря простоте реализации.
 
-### **Scalability**
-Usually, the load of a hotel reservation system is not high. 
+### **Масштабируемость**
+Обычно нагрузка на систему бронирования отелей невысока.
 
-However, the interviewer might ask you how you'd handle a situation where the system gets adopted for a larger, popular travel site such as booking.com
-In that case, QPS can be 1000 times larger.
+Однако интервьюер может спросить, как вы справитесь с ситуацией, когда систему начнёт использовать более крупный и популярный туристический сайт, например booking.com.
+В этом случае QPS может вырасти в 1000 раз.
 
-When there is such a situation, it is important to understand where our bottlenecks are. All the services are stateless, so they can be easily scaled via replication.
+В такой ситуации важно понимать, где находятся узкие места. Все сервисы stateless, поэтому их легко масштабировать репликацией.
 
-The database, however, is stateful and it's not as obvious how it can get scaled.
+База данных же хранит состояние (stateful), и способ её масштабирования не так очевиден.
 
-One way to scale it is by implementing database sharding - we can split the data across multiple databases, where each of them contain a portion of the data.
+Один из способов — шардирование базы данных: данные распределяются по нескольким базам, каждая из которых хранит часть данных.
 
-We can shard based on `hotel_id` as all queries filter based on it. 
-Assuming, QPS is 30,000, after sharding the database in 16 shards, each shard handles 1875 QPS, which is within a single MySQL cluster's load capacity.
+Шардировать можно по `hotel_id`, поскольку все запросы фильтруют по нему.
+Если QPS составляет 30 000, то после разбиения базы на 16 шардов каждый шард обрабатывает 1875 QPS, что укладывается в возможности одного кластера MySQL.
 
 <div style="margin-left:3rem">
-    <img src="./images/database-sharding.png" alt="database-sharding" width="500" />
+    <img src="./images/database-sharding.png" alt="шардирование базы данных" width="500" />
 </div>
 
-We can also utilize caching for room inventory and reservations via Redis. We can set TTL so that old data can expire for days which are past.
+Также можно использовать кэширование инвентаря номеров и бронирований в Redis. Можно задать TTL (Time To Live — время жизни записи), чтобы старые данные за прошедшие дни истекали.
 
 <div style="margin-left:3rem">
-    <img src="./images/inventory-cache.png" alt="inventory-cache" width="500" />
+    <img src="./images/inventory-cache.png" alt="кэш инвентаря" width="500" />
 </div>
 
-The way we store an inventory is based on the `hotel_id`, `room_type_id` and `date`:
+Инвентарь хранится по ключу на основе `hotel_id`, `room_type_id` и `date`:
 
 ```
 key: hotelID_roomTypeID_{date}
 value: the number of available rooms for the given hotel ID, room type ID and date.
 ```
 
-Data consistency happens async and is managed by using a CDC streaming mechanism - database changes are read and applied to a separate system.
-Debezium is a popular option for synchronizing database changes with Redis.
+Согласованность данных достигается асинхронно с помощью потокового механизма CDC (Change Data Capture — захват изменений данных): изменения в базе данных считываются и применяются к отдельной системе.
+Debezium — популярный инструмент для синхронизации изменений базы данных с Redis.
 
-Using such a mechanism, there is a possibility that the cache and database are inconsistent for some time.
-This is fine in our case because the database will prevent us from making an invalid reservation.
+При таком механизме кэш и база данных могут некоторое время быть несогласованными.
+В нашем случае это допустимо, поскольку база данных не позволит создать некорректное бронирование.
 
-This will cause some issue on the UI as a user would have to refresh the page to see that "there are no more rooms left", 
-but that is something which can happen regardless of this issue if eg a person hesitates a lot before making a reservation.
+Это создаст некоторые неудобства в UI (User Interface — пользовательский интерфейс): пользователю придётся обновить страницу, чтобы увидеть, что «свободных номеров больше нет»,
+но такое может случиться и независимо от этой проблемы — например, если человек долго колеблется перед бронированием.
 
-Caching pros:
- - Reduced database load
- - High performance, as Redis manages data in-memory
+Плюсы кэширования:
+ - Снижение нагрузки на базу данных
+ - Высокая производительность, поскольку Redis хранит данные в памяти
 
-Caching cons:
- - Maintaining data consistency between cache and DB is hard. We need to consider how the inconsistency impacts user experience.
+Минусы кэширования:
+ - Поддерживать согласованность данных между кэшем и БД сложно. Нужно учитывать, как несогласованность влияет на пользовательский опыт.
 
-### **Data consistency among services**
-A monolithic application enables us to use a shared relational database for ensuring data consistency.
+### **Согласованность данных между сервисами**
+Монолитное приложение позволяет использовать общую реляционную базу данных для обеспечения согласованности данных.
 
-In our microservice design, we chose a hybrid approach where some services are separate, 
-but the reservation and inventory APIs are handled by the same servicefor the reservation and inventory APIs.
+В нашем микросервисном дизайне мы выбрали гибридный подход: часть сервисов выделена отдельно,
+но API бронирования и инвентаря обслуживаются одним и тем же сервисом.
 
-This is done because we want to leverage the relational database's ACID guarantees to ensure consistency.
+Так сделано потому, что мы хотим использовать ACID-гарантии реляционной базы данных для обеспечения согласованности.
 
-However, the interviewer might challenge this approach as it's not a pure microservice architecture, where each service has a dedicated database:
-
-<div style="margin-left:3rem">
-    <img src="./images/microservices-vs-monolith.png" alt="microservices-vs-monolith" width="500" />
-</div>
-
-This can lead to consistency issues. In a monolithic server, we can leverage a relational DBs transaction capabilities to implement atomic operations:
+Однако интервьюер может оспорить этот подход, поскольку это не «чистая» микросервисная архитектура, где у каждого сервиса своя выделенная база данных:
 
 <div style="margin-left:3rem">
-    <img src="./images/atomicity-monolith.png" alt="atomicity-monolith" width="500" />
+    <img src="./images/microservices-vs-monolith.png" alt="микросервисы против монолита" width="500" />
 </div>
 
-It's more challenging, however, to guarantee this atomicity when the operation spans across multiple services:
+Это может привести к проблемам с согласованностью. На монолитном сервере для реализации атомарных операций можно использовать транзакционные возможности реляционной БД:
 
 <div style="margin-left:3rem">
-    <img src="./images/microservice-non-atomic-operation.png" alt="microservice-non-atomic-operation" width="500" />
+    <img src="./images/atomicity-monolith.png" alt="атомарность в монолите" width="500" />
 </div>
 
-There are some well-known techniques to handle these data inconsistencies:
- - **Two-phase commit**: a database protocol which guarantees atomic transaction commit across multiple nodes. 
-   It's not performant, though, since a single node lag leads to all nodes blocking the operation.
- - **Saga**: a sequence of local transactions, where compensating transactions are triggered if any of the steps in a workflow fail. This is an eventually consistent approach.
+Однако гарантировать такую атомарность, когда операция затрагивает несколько сервисов, сложнее:
 
-It's worth noting that addressing data inconsistencies across microservices is a challenging problem, which raise the system complexity.
-It is good to consider whether the cost is worth it, given our more pragmatic approach of encapsulating dependent operations within the same relational database.
+<div style="margin-left:3rem">
+    <img src="./images/microservice-non-atomic-operation.png" alt="неатомарная операция в микросервисах" width="500" />
+</div>
+
+Есть несколько известных техник для устранения такой несогласованности данных:
+ - **Двухфазный коммит (two-phase commit)**: протокол баз данных, гарантирующий атомарный коммит транзакции на нескольких узлах.
+   Однако он не отличается производительностью, поскольку задержка одного узла приводит к блокировке операции на всех узлах.
+ - **Сага (Saga)**: последовательность локальных транзакций, в которой при сбое любого из шагов процесса запускаются компенсирующие транзакции. Это подход с согласованностью в конечном счёте (eventual consistency).
+
+Стоит отметить, что устранение несогласованности данных между микросервисами — сложная задача, повышающая сложность системы.
+Полезно оценить, оправданы ли эти затраты, с учётом нашего более прагматичного подхода — инкапсуляции зависимых операций в рамках одной реляционной базы данных.
 
 ---
 
-## Step 4: Wrap Up
-We presented a design for a hotel reservation system.
+## Шаг 4: Подведение итогов
+Мы представили дизайн системы бронирования отелей.
 
-These are the steps we went through:
- - Gathering requirements and doing back-of-the-envelope calculations to understand the system's scale
- - We presented the API Design, Data Model and system architecture in the high-level design
- - In the deep dive, we explored alternative database schema designs as requirements changed
- - We discussed race conditions and proposed solutions - pessimistic/optimistic locking, database constraints
- - Ways to scale the system via database sharding and caching
- - Finally we addressed how to handle data consistency issues across multiple microservices
+Вот шаги, которые мы прошли:
+ - Сбор требований и оценка «на салфетке» для понимания масштаба системы
+ - В высокоуровневом дизайне представили дизайн API, модель данных и архитектуру системы
+ - В ходе детальной проработки рассмотрели альтернативные схемы базы данных по мере изменения требований
+ - Обсудили состояния гонки (race conditions) и предложили решения — пессимистичная/оптимистичная блокировка, ограничения базы данных
+ - Способы масштабирования системы с помощью шардирования базы данных и кэширования
+ - Наконец, разобрали, как решать проблемы согласованности данных между несколькими микросервисами

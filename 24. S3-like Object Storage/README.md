@@ -1,138 +1,140 @@
-# Chapter 24: S3-like Object Storage
+**Русский** | [English](./README.en.md)
 
-## Introduction
+# Глава 24: Объектное хранилище наподобие S3
 
-In this chapter, we'll be designing an **object storage** service, similar to **Amazon S3**.
+## Введение
 
-Storage systems fall into three broad categories:
-- **Block storage**
-- **File storage**
-- **Object storage**
+В этой главе мы спроектируем сервис **объектного хранилища (object storage)**, похожий на **Amazon S3** (Simple Storage Service — облачное объектное хранилище Amazon).
 
-**Block storage** are devices, which came out in 1960s. HDDs and SSDs are such examples.
-These devices are typically physically attached to a server, although they can also be network-attached via high-speed network protocols.
-Servers can format the raw blocks and use them as a file system or it can hand control of them to servers directly.
+Системы хранения делятся на три большие категории:
+- **Блочное хранилище (block storage)**
+- **Файловое хранилище (file storage)**
+- **Объектное хранилище (object storage)**
 
-**File storage** is built on top of block storage. It provides a higher level of abstraction, making it easier to manage folders and files.
+**Блочные хранилища** — это устройства, появившиеся в 1960-х годах. Примеры — HDD (Hard Disk Drive — жёсткий диск) и SSD (Solid-State Drive — твердотельный накопитель).
+Обычно такие устройства физически подключены к серверу, хотя их можно подключать и по сети через высокоскоростные сетевые протоколы.
+Серверы могут отформатировать «сырые» блоки и использовать их как файловую систему либо передать управление ими напрямую серверным приложениям.
 
-**Object storage** sacrifices performance for high durability, vast scale and low cost.
-It targets "cold" data and is mainly used for archival and backup.
-There is no hierarchical directory structure, all data is stored as objects in a flat structure.
-It is relatively slow compared to other storage types. Most cloud providers have an object storage offering - Amazon S3, Google GCS, etc.
+**Файловое хранилище** построено поверх блочного. Оно обеспечивает более высокий уровень абстракции, упрощая управление папками и файлами.
+
+**Объектное хранилище** жертвует производительностью ради высокой долговечности (durability), огромного масштаба и низкой стоимости.
+Оно ориентировано на «холодные» данные и в основном используется для архивирования и резервного копирования.
+Иерархической структуры каталогов нет — все данные хранятся как объекты в плоской структуре.
+Оно сравнительно медленное по сравнению с другими типами хранилищ. У большинства облачных провайдеров есть объектное хранилище — Amazon S3, Google GCS (Google Cloud Storage — облачное хранилище Google) и т. д.
 
 <div style="margin-left:3rem">
-    <img src="./images/storage-comparison.png" alt="storage-comparison" width="500" />
+    <img src="./images/storage-comparison.png" alt="сравнение хранилищ" width="500" />
 </div>
 
-|                 | Block Storage                    | File Storage                            | Object Storage                 |
-|-----------------|----------------------------------|-----------------------------------------|--------------------------------|
-| Mutable Content | Y                                | Y                                       | N (has object versioning）     |
-| Cost            | High                             | Medium to high                          | Low                            |
-| Performance     | Medium to high, very high        | Medium to high                          | Low to medium                  |
-| Consistency     | Strong consistency               | Strong consistency                      | Strong consistency [5]         |
-| Data access     | SAS/iSCSI/FC                     | Standard file access, CIFS/SMB, and NFS | RESTful API                    |
-| Scalability     | Medium scalability               | High scalability                        | Vast scalability               |
-| Good for        | Virtual machines (VM), databases | General-purpose file system access      | Binary data, unstructured data |
+|                         | Блочное хранилище                    | Файловое хранилище                                 | Объектное хранилище                    |
+|-------------------------|--------------------------------------|----------------------------------------------------|----------------------------------------|
+| Изменяемое содержимое   | Да                                   | Да                                                 | Нет (есть версионирование объектов）   |
+| Стоимость               | Высокая                              | От средней до высокой                              | Низкая                                 |
+| Производительность      | От средней до высокой, очень высокая | От средней до высокой                              | От низкой до средней                   |
+| Согласованность         | Строгая согласованность              | Строгая согласованность                            | Строгая согласованность [5]            |
+| Доступ к данным         | SAS (Serial Attached SCSI — последовательный интерфейс дисков)/iSCSI (Internet SCSI — блочный доступ по IP-сети)/FC (Fibre Channel — высокоскоростная сеть хранения) | Стандартный файловый доступ, CIFS (Common Internet File System)/SMB (Server Message Block) — сетевые файловые протоколы Windows, и NFS (Network File System — сетевая файловая система Unix) | RESTful API (REST — Representational State Transfer, архитектурный стиль веб-API; API — Application Programming Interface, программный интерфейс) |
+| Масштабируемость        | Средняя                              | Высокая                                            | Огромная                               |
+| Подходит для            | Виртуальных машин (VM, Virtual Machine), баз данных   | Файлового доступа общего назначения                | Бинарных и неструктурированных данных  |
 
-Some terminology, related to object storage:
-- **Bucket** - logical container for objects. Name is globally unique.
-- **Object** - An individual piece of data, stored in a bucket. Contains object data and metadata.
-- **Versioning** - A feature keeping multiple variants of an object in the same bucket.
-- **Uniform Resource Identifier (URI)** - each resource is uniquely identified by a URI.
-- **Service-level Agreement (SLA)** - contract between service provider and client.
+Немного терминологии, связанной с объектным хранилищем:
+- **Бакет (bucket)** — логический контейнер для объектов. Имя глобально уникально.
+- **Объект (object)** — отдельный фрагмент данных, хранящийся в бакете. Содержит данные объекта и метаданные.
+- **Версионирование (versioning)** — функция, позволяющая хранить несколько вариантов объекта в одном бакете.
+- **Унифицированный идентификатор ресурса (Uniform Resource Identifier, URI)** — каждый ресурс однозначно идентифицируется URI.
+- **Соглашение об уровне обслуживания (Service-level Agreement, SLA)** — договор между поставщиком услуги и клиентом.
 
-Amazon S3 Standard-Infrequent Access storage class SLAs:
-- Durability of 99.999999999% across multiple Availability Zones
-- Data is resilient in the event of entire Availability Zone being destroyed
-- Designed for 99.9% availability
+SLA класса хранения Amazon S3 Standard-Infrequent Access:
+- Долговечность 99,999999999% в нескольких зонах доступности (Availability Zones)
+- Данные сохраняются даже при полном уничтожении зоны доступности
+- Рассчитан на доступность 99,9%
 
 ---
 
-## Step 1: Understand the Problem and Establish Design Scope
+## Шаг 1: Разобраться в задаче и определить рамки дизайна
 
-- C: Which features should be included?
-- I: Bucket creation, Object upload/download, versioning, Listing objects in a bucket
-- C: What is the typical data size?
-- I: We need to store both massive objects and small objects efficiently
-- C: How much data do we store in a year?
-- I: 100 petabytes
-- C: Can we assume 6 nines of data durbility (99.9999%) and service availability of 4 nines (99.99%)?
-- I: Yes, sounds reasonable
+- К: Какие функции должны быть включены?
+- И: Создание бакетов, загрузка/скачивание объектов, версионирование, получение списка объектов в бакете.
+- К: Каков типичный размер данных?
+- И: Нужно эффективно хранить как огромные, так и маленькие объекты.
+- К: Сколько данных мы храним за год?
+- И: 100 петабайт.
+- К: Можно ли исходить из долговечности данных в 6 девяток (99,9999%) и доступности сервиса в 4 девятки (99,99%)?
+- И: Да, звучит разумно.
 
-### **Non-functional requirements**
+### **Нефункциональные требования**
 
-- **100 PB of data**
-- **6 nines of data durability**
-- **4 nines of service availability**
-- Storage efficiency. Reduce storage cost while maintaining high reliability and performance
+- **100 ПБ данных**
+- **Долговечность данных — 6 девяток**
+- **Доступность сервиса — 4 девятки**
+- Эффективность хранения. Снизить стоимость хранения, сохранив высокую надёжность и производительность.
 
-### **Back-of-the-envelope estimation**
+### **Оценка «на салфетке» (back-of-the-envelope estimation)**
 
-Object storage is likely to have bottlenecks in disk capacity or IO per second (IOPS).
+Узкими местами объектного хранилища, скорее всего, будут ёмкость дисков или число операций ввода-вывода в секунду (IOPS — Input/Output Operations Per Second).
 
-Assumptions:
-- we have 20% small (less than 1mb), 60% mid-size (1-64mb) and 20% large objects (greater than 64mb),
-- One hard disk (SATA, 7200rpm) is capable of doing 100-150 random seeks per second (100-150 IOPS)
+Допущения:
+- у нас 20% маленьких (меньше 1 МБ), 60% средних (1–64 МБ) и 20% больших объектов (больше 64 МБ);
+- один жёсткий диск (SATA — Serial Advanced Technology Attachment, последовательный интерфейс подключения дисков; 7200 об/мин) способен выполнять 100–150 случайных позиционирований в секунду (100–150 IOPS).
 
-Given the assumptions, we can estimate the total number of objects the system can persist.
-- Let's use median size per object type to simplify calculation - 0.5mb for small, 32mb for medium, 200mb for large.
-- Given 100PB of storage (10^11 MB) and 40% of storage usage results in 0.68bil objects
-- If we assume metadata is 1kb, then we need 0.68tb space to store metadata info
+Исходя из этих допущений, можно оценить общее число объектов, которое система способна хранить.
+- Для упрощения расчёта возьмём медианный размер для каждого типа объектов — 0,5 МБ для маленьких, 32 МБ для средних, 200 МБ для больших.
+- При 100 ПБ хранилища (10^11 МБ) и заполненности 40% получаем 0,68 млрд объектов.
+- Если метаданные занимают 1 КБ, то для хранения метаданных нужно 0,68 ТБ.
 
 ---
 
-## Step 2: Propose High-Level Design and Get Buy-In
+## Шаг 2: Предложить высокоуровневый дизайн и получить одобрение
 
-Let's explore some interesting properties of object storage before diving into the design:
-- **Object immutability** - objects in object storage are immutable (not the case in other storage systems). We may delete them or replace them, but no update.
-- **Key-value store** - an object URI is its key and we can get its contents by making an HTTP call
-- **Write once, read many times** - data access pattern is writing once and reading many times. According to some Linkedin research, 95% of operations are reads
-- Support both small and large objects
+Прежде чем перейти к дизайну, рассмотрим некоторые интересные свойства объектного хранилища:
+- **Неизменяемость объектов (object immutability)** — объекты в объектном хранилище неизменяемы (в других системах хранения это не так). Их можно удалить или заменить, но не обновить.
+- **Хранилище «ключ-значение» (key-value store)** — URI объекта является его ключом, и содержимое можно получить HTTP-запросом (HyperText Transfer Protocol — протокол передачи гипертекста).
+- **Одна запись, много чтений (write once, read many)** — паттерн доступа к данным: записываем один раз, читаем много раз. Согласно исследованию LinkedIn, 95% операций — это чтение.
+- Поддержка как маленьких, так и больших объектов.
 
-Design philosophy of object storage is similar to UNIX - when we save a file, it creates the filename in a data structure, called inode and file data is stored in different disk locations.
-The inode contains a list of file block pointers, which point to different locations on disk.
+Философия дизайна объектного хранилища похожа на UNIX: при сохранении файла его имя записывается в структуру данных, называемую inode, а данные файла хранятся в разных местах диска.
+Inode содержит список указателей на блоки файла, которые указывают на разные места на диске.
 
-When accessing a file, we first fetch its metadata from the inode, prior to fetching the file contents.
+При обращении к файлу мы сначала получаем его метаданные из inode и лишь затем — содержимое файла.
 
-Object storage works similarly - metadata store is used for file information, but contents are stored on disk:
-
-<div style="margin-left:3rem">
-    <img src="./images/object-store-vs-unix.png" alt="object-store-vs-unix" width="500" />
-</div>
-
-By separating metadata from file contents, we can scale the different stores independently:
+Объектное хранилище работает аналогично: хранилище метаданных используется для информации о файле, а содержимое хранится на диске:
 
 <div style="margin-left:3rem">
-    <img src="./images/bucket-and-object.png" alt="bucket-and-object" width="500" />
+    <img src="./images/object-store-vs-unix.png" alt="объектное хранилище и UNIX" width="500" />
 </div>
 
-### **High-level design**
+Разделяя метаданные и содержимое файлов, мы можем масштабировать разные хранилища независимо:
 
 <div style="margin-left:3rem">
-    <img src="./images/high-level-design.png" alt="high-level-design" width="500" />
+    <img src="./images/bucket-and-object.png" alt="бакет и объект" width="500" />
 </div>
 
-- **Load balancer** - distributes API requests across service replicas
-- **API service** - Stateless server, orchestrating calls to metadata and object store, as well as IAM service.
-- **Identity and access management (IAM)** - central place for auth, authz, access control.
-- **Data store** - stores and retrieves actual data. Operations are based on object ID (UUID).
-- **Metadata store** - stores object metadata
-
-### **Uploading an object**
+### **Высокоуровневый дизайн**
 
 <div style="margin-left:3rem">
-    <img src="./images/uploading-object.png" alt="uploading-object" width="500" />
+    <img src="./images/high-level-design.png" alt="высокоуровневый дизайн" width="500" />
 </div>
 
-- Create a bucket named "bucket-to-share" via HTTP PUT request
-- API service calls IAM to ensure user is authorized and has write permissions
-- API service calls metadata store to create a bucket entry. Once created, success response is returned.
-- After bucket is created, HTTP PUT is sent to create an object named "script.txt"
-- API service verifies user identity and ensures user has write permissions
-- Once validation passes, object payload is sent via HTTP PUT to the data store. Data store persists it and returns a UUID.
-- API service calls metadata store to create a new entry with object_id, bucket_id and bucket_name, among other metadata.
+- **Балансировщик нагрузки (load balancer)** — распределяет API-запросы между репликами сервиса.
+- **API-сервис** — сервер без состояния (stateless), оркестрирующий вызовы хранилища метаданных, хранилища объектов, а также сервиса IAM.
+- **Управление идентификацией и доступом (Identity and Access Management, IAM)** — централизованное место для аутентификации, авторизации и контроля доступа.
+- **Хранилище данных (data store)** — сохраняет и извлекает сами данные. Операции выполняются по ID (Identifier — идентификатор) объекта — UUID (Universally Unique Identifier, универсальный уникальный идентификатор).
+- **Хранилище метаданных (metadata store)** — хранит метаданные объектов.
 
-Example object upload request:
+### **Загрузка объекта**
+
+<div style="margin-left:3rem">
+    <img src="./images/uploading-object.png" alt="загрузка объекта" width="500" />
+</div>
+
+- С помощью HTTP-запроса PUT создаётся бакет с именем "bucket-to-share".
+- API-сервис обращается к IAM, чтобы убедиться, что пользователь авторизован и имеет права на запись.
+- API-сервис обращается к хранилищу метаданных, чтобы создать запись о бакете. После создания возвращается успешный ответ.
+- После создания бакета отправляется HTTP PUT для создания объекта с именем "script.txt".
+- API-сервис проверяет личность пользователя и убеждается, что у него есть права на запись.
+- После успешной проверки содержимое объекта отправляется через HTTP PUT в хранилище данных. Хранилище данных сохраняет его и возвращает UUID.
+- API-сервис обращается к хранилищу метаданных, чтобы создать новую запись с object_id, bucket_id и bucket_name, а также другими метаданными.
+
+Пример запроса на загрузку объекта:
 
 ```
 PUT /bucket-to-share/script.txt HTTP/1.1
@@ -146,11 +148,11 @@ x-amz-meta-author: Alex
 [4567 bytes of object data]
 ```
 
-### **Downloading an object**
+### **Скачивание объекта**
 
-Buckets have no directory hierarchy, buy we can create a logical hierarchy by concatenating bucket name and object name to simulate a folder structure.
+У бакетов нет иерархии каталогов, но можно создать логическую иерархию, объединяя имя бакета и имя объекта, чтобы имитировать структуру папок.
 
-Example GET request for fetching an object:
+Пример GET-запроса для получения объекта:
 
 ```
 GET /bucket-to-share/script.txt HTTP/1.1
@@ -160,288 +162,288 @@ Authorization: authorization string
 ```
 
 <div style="margin-left:3rem">
-    <img src="./images/download-object.png" alt="download-object" width="500" />
+    <img src="./images/download-object.png" alt="скачивание объекта" width="500" />
 </div>
 
-- Client sends an HTTP GET request to the load balancer, ie `GET /bucket-to-share/script.txt`
-- API service queries IAM to verify the user has correct permissions to read the bucket
-- Once validated, UUID of object is retrieved from metadata store
-- Object payload is retrieved from data store based on UUID and returned to the client
+- Клиент отправляет HTTP-запрос GET на балансировщик нагрузки, т. е. `GET /bucket-to-share/script.txt`.
+- API-сервис обращается к IAM, чтобы проверить, есть ли у пользователя права на чтение бакета.
+- После проверки UUID объекта извлекается из хранилища метаданных.
+- Содержимое объекта извлекается из хранилища данных по UUID и возвращается клиенту.
 
 ---
 
 // sprint 1
 
-## Step 3: Design Deep Dive
+## Шаг 3: Детальное проектирование
 
-### **Data store**
+### **Хранилище данных**
 
-Here's how the API service interacts with the data store:
-
-<div style="margin-left:3rem">
-    <img src="./images/data-store-interactions.png" alt="data-store-interactions" width="500" />
-</div>
-
-The data store's main components:
+Вот как API-сервис взаимодействует с хранилищем данных:
 
 <div style="margin-left:3rem">
-    <img src="./images/data-store-main-components.png" alt="data-store-main-components" width="500" />
+    <img src="./images/data-store-interactions.png" alt="взаимодействие с хранилищем данных" width="500" />
 </div>
 
-The data routing service provides a RESTful or gRPC API to access the data node cluster.
-It is a stateless service, which scales by adding more servers.
-
-It's main responsibilities are:
-- querying the placement service to get the best data node to store data
-- reading data from data nodes and returning it to the API service
-- Writing data to data nodes
-
-The placement service determines which data nodes should store an object.
-It maintains a virtual cluster map, which determines the physical topology of a cluster.
+Основные компоненты хранилища данных:
 
 <div style="margin-left:3rem">
-    <img src="./images/virtual-cluster-map.png" alt="virtual-cluster-map" width="500" />
+    <img src="./images/data-store-main-components.png" alt="основные компоненты хранилища данных" width="500" />
 </div>
 
-The service also sends heartbeats to all data nodes to determine if they should be removed from the virtual cluster.
+Сервис маршрутизации данных (data routing service) предоставляет RESTful или gRPC (Google Remote Procedure Call — фреймворк удалённого вызова процедур) API для доступа к кластеру узлов данных.
+Это сервис без состояния, который масштабируется добавлением серверов.
 
-Since this is a critical service, it is recommended to maintain a cluster of 5 or 7 replicas, synchronized via Paxos or Raft consensus algorithms.
-Eg a 7 node cluster can tolerate 3 nodes failing.
+Его основные обязанности:
+- запрашивать у сервиса размещения (placement service) наиболее подходящий узел данных для хранения;
+- читать данные с узлов данных и возвращать их API-сервису;
+- записывать данные на узлы данных.
 
-Data nodes store the actual object data.
-Reliability and durability is ensured by replicating data to multiple data nodes.
-
-Each data node has a daemon running, which sends heartbeats to the placement service.
-
-The heartbeat includes:
-- How many disk drives (HDD or SSD) does the data node manage?
-- How much data is stored on each drive?
-
-#### Data persistence flow
+Сервис размещения определяет, на каких узлах данных должен храниться объект.
+Он поддерживает виртуальную карту кластера (virtual cluster map), которая описывает физическую топологию кластера.
 
 <div style="margin-left:3rem">
-    <img src="./images/data-persistence-flow.png" alt="data-persistence-flow" width="500" />
+    <img src="./images/virtual-cluster-map.png" alt="виртуальная карта кластера" width="500" />
 </div>
 
-- API service forwards the object data to data store
-- Data routing service sends the data to the primary data node
-- Primary data node saves the data locally and replicates it to two secondary data nodes. Response is sent after successful replication.
-- The UUID of the object is returned to the API service.
+Сервис также обменивается heartbeat-сообщениями со всеми узлами данных, чтобы определить, нужно ли исключить их из виртуального кластера.
 
-Caveats:
-- Given an object UUID, it's replication group is deterministically chosen by using consistent hashing
-- In step 4, the primary data node replicates the object data before returning a response. This favors strong consistency over higher latency.
+Поскольку это критически важный сервис, рекомендуется поддерживать кластер из 5 или 7 реплик, синхронизируемых с помощью алгоритмов консенсуса Paxos или Raft.
+Например, кластер из 7 узлов выдерживает отказ 3 узлов.
+
+Узлы данных (data nodes) хранят сами данные объектов.
+Надёжность и долговечность обеспечиваются репликацией данных на несколько узлов данных.
+
+На каждом узле данных работает демон, который отправляет heartbeat-сообщения сервису размещения.
+
+Heartbeat включает:
+- Сколькими дисками (HDD или SSD) управляет узел данных?
+- Сколько данных хранится на каждом диске?
+
+#### Процесс сохранения данных
 
 <div style="margin-left:3rem">
-    <img src="./images/consistency-vs-latency.png" alt="consistency-vs-latency" width="500" />
+    <img src="./images/data-persistence-flow.png" alt="процесс сохранения данных" width="500" />
 </div>
 
-#### How data is organized
+- API-сервис передаёт данные объекта в хранилище данных.
+- Сервис маршрутизации данных отправляет данные на первичный (primary) узел данных.
+- Первичный узел сохраняет данные локально и реплицирует их на два вторичных узла. Ответ отправляется после успешной репликации.
+- UUID объекта возвращается API-сервису.
 
-One simple approach to managing data is to store each object in a separate file.
-
-This works, but is not performant with many small files in a file system:
-- Data blocks on HDD are wasted, because every file uses the whole block size. Typical block size is 4kb.
-- Many files means many inodes. Operating systems don't deal well with too many inodes and there is also a max inode limit.
-
-These issues can be addressed by merging many small files into bigger ones via a write-ahead log (WAL). Once the file reaches its capacity (typically a few GB), a new file is created:
+Нюансы:
+- Для заданного UUID объекта его группа репликации выбирается детерминированно с помощью консистентного хеширования (consistent hashing).
+- На шаге 4 первичный узел реплицирует данные объекта перед отправкой ответа. Это выбор в пользу строгой согласованности ценой более высокой задержки.
 
 <div style="margin-left:3rem">
-    <img src="./images/wal-optimization.png" alt="wal-optimization" width="500" />
+    <img src="./images/consistency-vs-latency.png" alt="согласованность против задержки" width="500" />
 </div>
 
-The downside of this approach is that write access to the file needs to be serialized. Multiple cores accessing the same file must wait for each other.
-To fix this, we can confine files to specific cores to avoid lock contention.
+#### Организация данных
 
-#### Object lookup
+Один из простых подходов к управлению данными — хранить каждый объект в отдельном файле.
 
-To support storing multiple objects in the same file, we need to maintain a table, which tells the data node:
+Это работает, но неэффективно при большом количестве маленьких файлов в файловой системе:
+- Блоки данных на HDD расходуются впустую, поскольку каждый файл занимает целый блок. Типичный размер блока — 4 КБ.
+- Много файлов — много inode. Операционные системы плохо справляются с очень большим числом inode, к тому же существует лимит на их максимальное количество.
+
+Эти проблемы можно решить, объединяя множество маленьких файлов в более крупные с помощью журнала упреждающей записи (write-ahead log, WAL). Когда файл достигает своей ёмкости (обычно несколько ГБ), создаётся новый файл:
+
+<div style="margin-left:3rem">
+    <img src="./images/wal-optimization.png" alt="оптимизация с WAL" width="500" />
+</div>
+
+Недостаток этого подхода в том, что запись в файл должна быть сериализована. Несколько ядер, обращающихся к одному файлу, вынуждены ждать друг друга.
+Чтобы это исправить, можно закрепить файлы за конкретными ядрами и избежать конкуренции за блокировки (lock contention).
+
+#### Поиск объекта
+
+Для поддержки хранения нескольких объектов в одном файле нужно поддерживать таблицу, которая сообщает узлу данных:
 - `object_id`
-- `filename` where object is stored
-- `file_offset` where object starts
+- `filename` — файл, в котором хранится объект
+- `file_offset` — смещение, с которого начинается объект
 - `object_size`
 
-We can deploy this table in a file-based db like RocksDB or a traditional relational database.
-Since the access pattern is low write+high read, a relational database works better.
+Эту таблицу можно развернуть в файловой БД, например RocksDB, или в традиционной реляционной базе данных.
+Поскольку паттерн доступа — мало записей и много чтений, реляционная база данных подходит лучше.
 
-How should we deploy it?
-We could deploy the db and scale it separately in a cluster, accessed by all data nodes.
+Как её развернуть?
+Можно развернуть БД отдельно и масштабировать её в виде кластера, к которому обращаются все узлы данных.
 
-Downsides:
-- we'd need to aggressively scale the cluster to serve all requests
-- there's additional network latency between data node and db cluster
+Недостатки:
+- кластер пришлось бы агрессивно масштабировать, чтобы обслуживать все запросы;
+- появляется дополнительная сетевая задержка между узлом данных и кластером БД.
 
-An alternative is to take advantage of the fact that data nodes are only interested to data related to them,
-so we can deploy the relational db within the data node itself.
+Альтернатива — воспользоваться тем, что узлам данных нужны только относящиеся к ним данные,
+и развернуть реляционную БД прямо на узле данных.
 
-SQLite is a good option as it's a lightweight file-based relational database.
+SQLite — хороший вариант, поскольку это легковесная файловая реляционная база данных.
 
-#### Updated data persistence flow
-
-<div style="margin-left:3rem">
-    <img src="./images/updated-data-persistence-flow.png" alt="updated-data-persistence-flow" width="500" />
-</div>
-
-- API Service sends a request to save a new object
-- Data node service appends the new object at the end of a file, named "/data/c"
-- A new record for the object is inserted into the object mapping table
-
-#### Durability
-
-Data durability is an important requirement in our design. In order to achieve 6 nines of durability, every failure case needs to be properly examined.
-
-First problem to address is hardware failures. We can achieve that by replicating data nodes to minimize probability of failure.
-But in addition to that, we also ought to replicate across different failure domains (cross-rack, cross-dc, separate networks, etc).
-A critical event can cause multiple hardware failures within the same domain:
+#### Обновлённый процесс сохранения данных
 
 <div style="margin-left:3rem">
-    <img src="./images/failure-domain-isolation.png" alt="failure-domain-isolation" width="500" />
+    <img src="./images/updated-data-persistence-flow.png" alt="обновлённый процесс сохранения данных" width="500" />
 </div>
 
-Assuming annual failure rate of a typical HDD is 0.81%, making three copies gives us 6 nines of durability.
+- API-сервис отправляет запрос на сохранение нового объекта.
+- Сервис узла данных дописывает новый объект в конец файла с именем "/data/c".
+- В таблицу сопоставления объектов (object mapping) вставляется новая запись для объекта.
 
-Replicating the data nodes like that grants us the durability we want, but we could also leverage erasure coding to reduce storage costs.
+#### Долговечность
 
-Erasure coding enables us to use parity bits, which allow us to reconstruct lost bits in the event of a failure:
+Долговечность данных — важное требование нашего дизайна. Чтобы достичь долговечности в 6 девяток, нужно тщательно проанализировать каждый сценарий отказа.
+
+Первая проблема, которую нужно решить, — аппаратные сбои. Её можно решить репликацией узлов данных, чтобы минимизировать вероятность потери данных.
+Но помимо этого следует реплицировать данные между разными доменами отказа (failure domains): между стойками, дата-центрами, в разные сети и т. д.
+Критическое событие может вызвать несколько аппаратных сбоев в пределах одного домена:
 
 <div style="margin-left:3rem">
-    <img src="./images/erasure-coding.png" alt="erasure-coding" width="500" />
+    <img src="./images/failure-domain-isolation.png" alt="изоляция доменов отказа" width="500" />
 </div>
 
-Imagine those bits are data nodes. If two of them go down, they can be recovered using the remaining four ones.
+Если годовая частота отказов типичного HDD составляет 0,81%, то три копии дают долговечность в 6 девяток.
 
-There are different erasure coding schemes. In our case, we could use 8+4 erasure coding, split across different failure domains to maximize reliability:
+Такая репликация узлов данных обеспечивает нужную долговечность, но для снижения стоимости хранения можно также использовать erasure coding (коды стирания).
+
+Erasure coding позволяет использовать биты чётности (parity bits), с помощью которых можно восстановить потерянные биты в случае сбоя:
 
 <div style="margin-left:3rem">
-    <img src="./images/erasure-coding-across-failure-domains.png" alt="erasure-coding-across-failure-domains" width="500" />
+    <img src="./images/erasure-coding.png" alt="erasure coding" width="500" />
 </div>
 
-Erasure coding enables us to achieve a much lower storage cost (50% improvement) at the expense of access speed due to the data routing service having to collect data from multiple locations:
+Представьте, что эти биты — узлы данных. Если два из них выйдут из строя, их можно восстановить с помощью оставшихся четырёх.
+
+Существуют разные схемы erasure coding. В нашем случае можно использовать схему 8+4, распределённую по разным доменам отказа для максимальной надёжности:
 
 <div style="margin-left:3rem">
-    <img src="./images/erasure-coding-vs-replication.png" alt="erasure-coding-vs-replication" width="500" />
+    <img src="./images/erasure-coding-across-failure-domains.png" alt="erasure coding по доменам отказа" width="500" />
 </div>
 
-Other caveats:
-- Replication requires 200% storage overhead (in case of 3 replicas) vs. 50% via erasure coding
-- Erasure coding [gives us 11 nines of durability](https://github.com/Backblaze/erasure-coding-durability) vs 6 nines via replication
-- Erasure coding requires more computation to calculate and store parities
-
-In sum, replication is more useful for latency-sensitive applications, whereas erasure coding is attractive for storage cost efficiency and durability.
-Erasure coding is also much harder to implement.
-
-#### Correctness verification
-
-If a disk fails entirely, then the failure is easy to detect. This is less straightforward in the event part of the disk memory gets corrupted.
-
-To detect this, we can use checksums - a hash of the file contents, which can be used to verify the file's integrity.
-
-In our case, we'll store checksums for each file and each object:
+Erasure coding позволяет добиться значительно более низкой стоимости хранения (улучшение на 50%) ценой скорости доступа, поскольку сервису маршрутизации данных приходится собирать данные из нескольких мест:
 
 <div style="margin-left:3rem">
-    <img src="./images/checksums-for-correctness.png" alt="checksums-for-correctness" width="500" />
+    <img src="./images/erasure-coding-vs-replication.png" alt="erasure coding против репликации" width="500" />
 </div>
 
-In the case of erasure coding (8+4), we'll need to fetch each of the 8 pieces of data separately and verify each of their checksums.
+Прочие нюансы:
+- Репликация требует 200% дополнительного места (при 3 репликах) против 50% при erasure coding.
+- Erasure coding [даёт долговечность в 11 девяток](https://github.com/Backblaze/erasure-coding-durability) против 6 девяток при репликации.
+- Erasure coding требует больше вычислений для расчёта и хранения данных чётности.
+
+В итоге репликация полезнее для приложений, чувствительных к задержкам, а erasure coding привлекателен с точки зрения стоимости хранения и долговечности.
+Кроме того, erasure coding гораздо сложнее реализовать.
+
+#### Проверка корректности
+
+Если диск выходит из строя полностью, такой сбой легко обнаружить. Сложнее, когда повреждается только часть данных на диске.
+
+Для обнаружения таких повреждений можно использовать контрольные суммы (checksums) — хеш содержимого файла, с помощью которого можно проверить его целостность.
+
+В нашем случае мы будем хранить контрольные суммы для каждого файла и каждого объекта:
+
+<div style="margin-left:3rem">
+    <img src="./images/checksums-for-correctness.png" alt="контрольные суммы для проверки корректности" width="500" />
+</div>
+
+В случае erasure coding (8+4) нужно будет получить каждый из 8 фрагментов данных по отдельности и проверить контрольную сумму каждого.
 
 // sprint 2
 
-### **Metadata data model**
+### **Модель данных метаданных**
 
-Table schemas:
+Схемы таблиц:
 
 <div style="margin-left:3rem">
-    <img src="./images/metadata-data-model.png" alt="metadata-data-model" width="500" />
+    <img src="./images/metadata-data-model.png" alt="модель данных метаданных" width="500" />
 </div>
 
-Queries we need to support:
-- Find an object ID by name
-- Insert/delete object based on name
-- List objects in a bucket sharing the same prefix
+Запросы, которые нужно поддерживать:
+- Найти ID объекта по имени.
+- Вставить/удалить объект по имени.
+- Получить список объектов в бакете с общим префиксом.
 
-There is usually a limit on the number of buckets a user can create, hence, the size of the buckets table is small and can fit into a single db server.
-But we still need to scale the server for read throughput.
+Обычно существует ограничение на число бакетов, которые может создать пользователь, поэтому таблица бакетов небольшая и помещается на одном сервере БД.
+Но сервер всё равно нужно масштабировать ради пропускной способности чтения.
 
-The object table will probably not fit into a single database server, though. Hence, we can scale the table via sharding:
-- Sharding by bucket_id will lead to hotspot issues as a bucket can have billions of objects
-- Sharding by bucket_id makes the load more evenly distributed, but our queries will be slow
-- We choose sharding by `hash(bucket_name, object_name)` since most queries are based on the object/bucket name.
+А вот таблица объектов, скорее всего, не поместится на одном сервере базы данных. Поэтому её можно масштабировать с помощью шардирования:
+- Шардирование по bucket_id приведёт к проблеме «горячих точек» (hotspots), поскольку в бакете могут быть миллиарды объектов.
+- Шардирование по bucket_id делает распределение нагрузки более равномерным, но запросы будут медленными.
+- Мы выбираем шардирование по `hash(bucket_name, object_name)`, поскольку большинство запросов основаны на имени объекта/бакета.
 
-Even with this sharding scheme, though, listing objects in a bucket will be slow.
+Однако даже при такой схеме шардирования получение списка объектов в бакете будет медленным.
 
-### **Listing objects in a bucket**
+### **Получение списка объектов в бакете**
 
-In a single database, listing an object based on its prefix (looks like a directory) works like this:
+В единственной базе данных получение списка объектов по префиксу (выглядящему как каталог) работает так:
 
 ```
 SELECT * FROM object WHERE bucket_id = "123" AND object_name LIKE `abc/%`
 ```
 
-This is challenging to fulfill when the database is sharded. To achieve it, we can run the query on every shard and aggregate the results in-memory.
-This makes pagination challenging though, since different shards contain a different result size and we need to maintain separate limit/offset for each.
+Выполнить такой запрос в шардированной базе данных сложно. Для этого можно выполнить запрос на каждом шарде и агрегировать результаты в памяти.
+Однако это усложняет пагинацию, поскольку разные шарды содержат разное количество результатов, и для каждого нужно поддерживать отдельные limit/offset.
 
-We can leverage the fact that typically object stores are not optimized for listing objects, so we can sacrifice listing performance.
-We can also create a denormalized table for listing objects, sharded by bucket ID.
-That would make our listing query sufficiently fast as it's isolated to a single database instance.
+Можно воспользоваться тем, что объектные хранилища обычно не оптимизированы для получения списков объектов, и пожертвовать производительностью этой операции.
+Также можно создать денормализованную таблицу для получения списков объектов, шардированную по ID бакета.
+Это сделает запрос получения списка достаточно быстрым, поскольку он будет изолирован в пределах одного экземпляра базы данных.
 
-### **Object versioning**
+### **Версионирование объектов**
 
-Versioning works by having another `object_version` column which is of type TIMEUUID, enabling us to sort records based on it.
+Версионирование реализуется с помощью дополнительного столбца `object_version` типа TIMEUUID, по которому можно сортировать записи.
 
-Each new version produces a new `object_id`:
+Каждая новая версия получает новый `object_id`:
 
 <div style="margin-left:3rem">
-    <img src="./images/object-versioning.png" alt="object-versioning" width="500" />
+    <img src="./images/object-versioning.png" alt="версионирование объектов" width="500" />
 </div>
 
-Deleting an object creates a new version with a special `object_id` indicating that the object was deleted. Queries for it return 404:
+Удаление объекта создаёт новую версию со специальным `object_id`, указывающим, что объект был удалён. Запросы к нему возвращают 404:
 
 <div style="margin-left:3rem">
-    <img src="./images/deleting-versioned-object.png" alt="deleting-versioned-object" width="500" />
+    <img src="./images/deleting-versioned-object.png" alt="удаление версионированного объекта" width="500" />
 </div>
 
-### **Optimizing uploads of large files**
+### **Оптимизация загрузки больших файлов**
 
-Uploading large files can be optimized by using multipart uploads - splitting a big file into several chunks, uploaded independently:
+Загрузку больших файлов можно оптимизировать с помощью составной загрузки (multipart upload) — разбиения большого файла на несколько частей, загружаемых независимо:
 
 <div style="margin-left:3rem">
-    <img src="./images/multipart-upload.png" alt="multipart-upload" width="500" />
+    <img src="./images/multipart-upload.png" alt="составная загрузка" width="500" />
 </div>
 
-- Client calls service to initiate a multipart upload
-- Data store returns an upload ID which uniquely identifies the upload
-- Client splits the large file into several chunks, uploaded independently using the upload id
-- When a chunk is uploaded, the data store returns an etag, which is a md5 checksum, identifying that upload chunk
-- After all parts are uploaded, client sends a complete multipart upload request, which includes upload_id, part numbers and all etags
-- Data store reassembles the object from its parts. The process can take a few minutes. After that, success response is returned to the client.
+- Клиент обращается к сервису, чтобы инициировать составную загрузку.
+- Хранилище данных возвращает ID загрузки, который однозначно её идентифицирует.
+- Клиент разбивает большой файл на несколько частей, которые загружаются независимо с использованием ID загрузки.
+- Когда часть загружена, хранилище данных возвращает etag — контрольную сумму MD5 (Message Digest 5 — алгоритм хеширования), идентифицирующую эту часть.
+- После загрузки всех частей клиент отправляет запрос на завершение составной загрузки, включающий upload_id, номера частей и все etag.
+- Хранилище данных собирает объект из частей. Этот процесс может занять несколько минут. После этого клиенту возвращается успешный ответ.
 
-Old parts, which are no longer useful can be removed at this point. We can introduce a garbage collector to deal with it.
+Старые части, которые больше не нужны, на этом этапе можно удалить. Для этого можно ввести сборщик мусора.
 
-### **Garbage collection**
+### **Сборка мусора**
 
-Garbage collection is the process of reclaiming storage space, which is no longer used. There are a few ways data becomes garbage:
-- **lazy object deletion** - object is marked as deleted without actually getting deleted
-- **orphan data** - eg an upload failed mid-flight and old parts need to be deleted
-- **corrupted data** - data which failed checksum verification
+Сборка мусора (garbage collection) — это процесс освобождения места в хранилище, которое больше не используется. Данные могут стать мусором несколькими способами:
+- **ленивое удаление объектов (lazy object deletion)** — объект помечается как удалённый, но фактически не удаляется;
+- **осиротевшие данные (orphan data)** — например, загрузка прервалась на середине, и старые части нужно удалить;
+- **повреждённые данные** — данные, не прошедшие проверку контрольной суммы.
 
-The garbage collector is also responsible for reclaiming unused space in replicas.
-With replication, data is deleted from both primaries and replicas. With erasure coding (8+4), data is deleted from all 12 nodes.
+Сборщик мусора также отвечает за освобождение неиспользуемого места в репликах.
+При репликации данные удаляются как с первичных узлов, так и с реплик. При erasure coding (8+4) данные удаляются со всех 12 узлов.
 
-To facilitate the deletion, we'll use a process called compaction:
-- Garbage collector copies objects which are not deleted from "data/b" to "data/d"
-- `object_mapping` table is updated once copying is complete using a database transaction
-- To avoid making too many small files, compaction is done on files which grow beyond a certain threshold
+Для удаления мы будем использовать процесс, называемый уплотнением (compaction):
+- Сборщик мусора копирует неудалённые объекты из "data/b" в "data/d".
+- После завершения копирования таблица `object_mapping` обновляется в рамках транзакции базы данных.
+- Чтобы не создавать слишком много маленьких файлов, уплотнение выполняется для файлов, размер которых превысил определённый порог.
 
 <div style="margin-left:3rem">
-    <img src="./images/compaction.png" alt="compaction" width="500" />
+    <img src="./images/compaction.png" alt="уплотнение" width="500" />
 </div>
 
 ---
 
-## Step 4: Wrap Up
+## Шаг 4: Подведение итогов
 
-Things we covered:
-- Designing an S3-like object storage
-- Comparing differences between object, block and file storages
-- Covered uploading, downloading, listing, versioning of objects in a bucket
-- Deep dived in the design - data store and metadata store, replication and erasure coding, multipart uploads, sharding
+Что мы рассмотрели:
+- Проектирование объектного хранилища наподобие S3.
+- Сравнение объектного, блочного и файлового хранилищ.
+- Загрузку, скачивание, получение списка и версионирование объектов в бакете.
+- Детальное проектирование — хранилище данных и хранилище метаданных, репликация и erasure coding, составная загрузка, шардирование.

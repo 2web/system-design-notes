@@ -1,99 +1,101 @@
-# Chapter 5: Design Consistent Hashing
+**Русский** | [English](./Readme.en.md)
 
-## Introduction
-This chapter explores consistent hashing, a technique essential for achieving horizontal scaling by efficiently distributing requests and data across servers. It minimizes data redistribution when servers are added or removed and ensures an even distribution of data to mitigate issues like server hotspots.
+# Глава 5. Проектирование консистентного хеширования (Consistent Hashing)
 
-## The Rehashing Problem
-### Explanation
-In traditional hashing methods, such as `serverIndex = hash(key) % N`, data redistribution becomes problematic when the number of servers changes. For example:
-- Removing a server causes most keys to be reassigned, leading to cache misses.
-- Adding a server results in unnecessary key redistributions.
+## Введение
+В этой главе рассматривается консистентное хеширование (consistent hashing) — техника, необходимая для горизонтального масштабирования за счёт эффективного распределения запросов и данных между серверами. Она минимизирует перераспределение данных при добавлении или удалении серверов и обеспечивает равномерное распределение данных, снижая риск таких проблем, как «горячие точки» (hotspots) на серверах.
 
-  <img src="./images/server-hashing.png"  alt="Server hashing" width="450">
+## Проблема перехеширования (rehashing)
+### Объяснение
+При традиционных методах хеширования, например `serverIndex = hash(key) % N`, перераспределение данных становится проблемой при изменении количества серверов. Например:
+- Удаление сервера приводит к переназначению большинства ключей, что вызывает промахи кэша (cache miss).
+- Добавление сервера приводит к ненужному перераспределению ключей.
 
-- This approach works well when the size of the server pool is fixed. However, problems arise when new servers are added, or existing servers are removed.
+  <img src="./images/server-hashing.png"  alt="Хеширование по серверам" width="450">
 
-  <img src="./images/server-hashing-miss.png"  alt="Server hashing Miss" width="450">
+- Этот подход хорошо работает, когда размер пула серверов фиксирован. Однако проблемы возникают при добавлении новых или удалении существующих серверов.
 
-### Key Issue
-Redistribution of most keys when server count changes causes inefficiency and overload.
+  <img src="./images/server-hashing-miss.png"  alt="Промахи при хешировании по серверам" width="450">
 
-## Consistent Hashing
-### Definition
-Consistent hashing ensures that only a fraction of keys are remapped when servers are added or removed. This minimizes disruptions and enhances scalability.
+### Ключевая проблема
+Перераспределение большинства ключей при изменении числа серверов приводит к неэффективности и перегрузке.
 
-### Key Concepts
-1. **Hash Space and Ring:** The hash space forms a continuous ring, with hash values distributed from `0` to `2^160-1` (e.g., using hash function like SHA-1). By connecting both ends we get a ring.
+## Консистентное хеширование
+### Определение
+Консистентное хеширование гарантирует, что при добавлении или удалении серверов переназначается лишь небольшая часть ключей. Это минимизирует сбои и улучшает масштабируемость.
+
+### Ключевые понятия
+1. **Хеш-пространство и кольцо:** хеш-пространство образует непрерывное кольцо, где значения хеша распределены от `0` до `2^160-1` (например, при использовании хеш-функции SHA-1 — Secure Hash Algorithm 1). Соединив оба конца, мы получаем кольцо.
     <p align="center">
-    <img src="./images/hash-ring.png"  alt="Hash Ring" width="450">
+    <img src="./images/hash-ring.png"  alt="Хеш-кольцо" width="450">
     </p>
 
-- Using the same hash function f, we map servers based on server IP or name onto the ring.  
+- С помощью той же хеш-функции f серверы отображаются на кольцо по их IP-адресу (IP — Internet Protocol) или имени.  
 
     <p align="center">
-    <img src="./images/server-ring.png"  alt="Server Ring" width="450">
+    <img src="./images/server-ring.png"  alt="Серверы на кольце" width="450">
     </p>
 
-1. **Server Lookup**
-- A key's server is determined by traversing clockwise on the ring until a server is found.
+1. **Поиск сервера**
+- Сервер для ключа определяется движением по кольцу по часовой стрелке до первого встреченного сервера.
 
   <p align="center">
-  <img src="./images/server-lookup.png"  alt="Server Lookup" width="450">
+  <img src="./images/server-lookup.png"  alt="Поиск сервера" width="450">
   </p>
 
-2. **Adding and Removing Servers**
-- Adding a server redistributes only nearby keys. Only a fraction of keys are redistributed to the new server.
+2. **Добавление и удаление серверов**
+- При добавлении сервера перераспределяются только соседние ключи. На новый сервер переносится лишь небольшая часть ключей.
   
   <p align="center">
-  <img src="./images/adding-server.png"  alt="Adding Server" width="450">
+  <img src="./images/adding-server.png"  alt="Добавление сервера" width="450">
   </p>
 
-- Removing a server affects only the keys in its range. Only keys from the removed server are reassigned to the next server clockwise.
+- Удаление сервера затрагивает только ключи из его диапазона. Лишь ключи удалённого сервера переназначаются следующему серверу по часовой стрелке.
 
   <p align="center">
-  <img src="./images/removing-server.png"  alt="Removing Server" width="450">
+  <img src="./images/removing-server.png"  alt="Удаление сервера" width="450">
   </p>
 
-## Challenges and Solutions
-### Two Issues in Basic Approach
-1. **Uneven Partition Sizes:** Servers may have unequal data partitions.
-2. **Non-uniform Key Distribution:** Some servers may receive significantly more keys than others.
+## Проблемы и решения
+### Две проблемы базового подхода
+1. **Неравные размеры разделов:** серверам могут достаться разделы (партиции) данных разного размера.
+2. **Неравномерное распределение ключей:** некоторые серверы могут получать значительно больше ключей, чем другие.
 
-### Solution: Virtual Nodes
-- Each server is represented by multiple virtual nodes on the ring uniformly distrubuted on the ring.
-- Virtual nodes improve key distribution and balance load. As the number of virtual nodes increases, the distribution of keys       becomes more balanced. This is because the standard deviation gets smaller with more virtual nodes, leading to balanced data distribution.
+### Решение: виртуальные узлы (virtual nodes)
+- Каждый сервер представлен на кольце несколькими виртуальными узлами, равномерно распределёнными по кольцу.
+- Виртуальные узлы улучшают распределение ключей и балансируют нагрузку. С ростом числа виртуальных узлов распределение ключей       становится более сбалансированным. Это объясняется тем, что стандартное отклонение уменьшается с увеличением числа виртуальных узлов, что приводит к сбалансированному распределению данных.
    
   <p align="center">
-  <img src="./images/virtual-nodes.png"   alt="Virtual Nodes" width="450">
+  <img src="./images/virtual-nodes.png"   alt="Виртуальные узлы" width="450">
   </p>
 
-## Affected Keys
-When servers are added or removed:
-- **Added Server:** Affected keys are those between the new server and its predecessor.
-  In the following example server 4 is added onto the ring. The affected range starts from s4 (newly
-  added node) and moves anticlockwise around the ring until a server is found (s3). Thus, keys
-  located between s3 and s4 need to be redistributed to s4.
+## Затрагиваемые ключи
+При добавлении или удалении серверов:
+- **Добавленный сервер:** затрагиваются ключи, находящиеся между новым сервером и предыдущим сервером.
+  В следующем примере на кольцо добавляется сервер 4. Затрагиваемый диапазон начинается от s4 (только что
+  добавленного узла) и идёт против часовой стрелки по кольцу до первого встреченного сервера (s3). Таким образом, ключи,
+  расположенные между s3 и s4, нужно перераспределить на s4.
 
   <p align="center">
-  <img src="./images/server-addition.png"   alt="Server Addition" width="450">
+  <img src="./images/server-addition.png"   alt="Добавление сервера" width="450">
   </p>
 
-- **Removed Server:** Affected keys are those between the removed server and its predecessor. In the following example when a server (s1) is removed, the affected range starts from s1
-(removed node) and moves anticlockwise around the ring until a server is found (s0). Thus, keys located between s0 and s1 must be redistributed to s2.
+- **Удалённый сервер:** затрагиваются ключи, находящиеся между удалённым сервером и предыдущим сервером. В следующем примере при удалении сервера (s1) затрагиваемый диапазон начинается от s1
+(удалённого узла) и идёт против часовой стрелки по кольцу до первого встреченного сервера (s0). Таким образом, ключи, расположенные между s0 и s1, должны быть перераспределены на s2.
    
   <p align="center">
-  <img src="./images/server-removed.png"   alt="Server Removed" width="450">
+  <img src="./images/server-removed.png"   alt="Удаление сервера" width="450">
   </p>
 
-## Benefits of Consistent Hashing
-- **Minimized Redistribution:** Only a fraction of keys are reassigned.
-- **Scalability:** Enables horizontal scaling.
-- **Mitigates Hotspots:** Balances data distribution to avoid server overload.
+## Преимущества консистентного хеширования
+- **Минимальное перераспределение:** переназначается лишь небольшая часть ключей.
+- **Масштабируемость:** позволяет масштабироваться горизонтально.
+- **Снижение риска «горячих точек»:** балансирует распределение данных, предотвращая перегрузку серверов.
 
-## Real-World Applications
+## Применение на практике
 - Amazon Dynamo DB
 - Apache Cassandra
 - Discord
-- Akamai CDN
-- Maglev Load Balancer
+- Akamai CDN (Content Delivery Network — сеть доставки контента)
+- Балансировщик нагрузки Maglev
 

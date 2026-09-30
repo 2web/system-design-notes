@@ -1,77 +1,79 @@
-# Chapter 26: Payment System
+**Русский** | [English](./README.en.md)
 
-## Introduction
-We'll design a **payment system** in this chapter, which underpins all of modern **e-commerce**.
+# Глава 26: Платёжная система
 
-A **payment system** is used to settle financial transactions, transferring monetary value.
+## Введение
+В этой главе мы спроектируем **платёжную систему** — фундамент всей современной **электронной коммерции (e-commerce)**.
 
----
-
-## Step 1: Understand the Problem and Establish Design Scope
- * C: What kind of payment system are we building?
- * I: A payment backend for an e-commerce system, similar to Amazon.com. It handles everything related to money movement.
- * C: What payment options are supported - Credit cards, PayPal, bank cards, etc?
- * I: The system should support all these options in real life. For the purposes of the interview, we can use credit card payments.
- * C: Do we handle credit card processing ourselves?
- * I: No, we use a third-party provider like Stripe, Braintree, Square, etc.
- * C: Do we store credit card data in our system?
- * I: Due to compliance reasons, we do not store credit card data directly in our systems. We rely on third-party payment processors.
- * C: Is the application global? Do we need to support different currencies and international payments?
- * I: The application is global, but we assume only one currency is used for the purposes of the interview.
- * C: How many payment transactions per day do we support?
- * I: 1mil transactions per day.
- * C: Do we need to support the payout flow to eg payout to payers each month?
- * I: Yes, we need to support that
- * C: Is there anything else I should pay attention to?
- * I: We need to support reconciliations to fix any inconsistencies in communicating with internal and external systems.
-
-### **Functional requirements**
- * Pay-in flow - payment system receives money from customers on behalf of merchants
- * Pay-out flow - payment system sends money to sellers around the world
-
-### **Non-functional requirements**
- * Reliability and fault-tolerance. Failed payments need to be carefully handled
- * A reconciliation between internal and external systems needs to be setup.
-
-### **Back-of-the-envelope estimation**
-The system needs to process 1mil transactions per day, which is 10 transactions per second.
-
-This is not a high throughput for any database system, so it's not the focus of this interview.
+**Платёжная система** используется для расчётов по финансовым транзакциям, то есть для перевода денежных средств.
 
 ---
 
-## Step 2: Propose High-Level Design and Get Buy-In
-At a high-level, we have three actors, participating in money movement:
+## Шаг 1: Разобраться в задаче и определить рамки проектирования
+ * К: Какую платёжную систему мы строим?
+ * И: Платёжный бэкенд для e-commerce-системы наподобие Amazon.com. Он отвечает за всё, что связано с движением денег.
+ * К: Какие способы оплаты поддерживаются — кредитные карты, PayPal, банковские карты и т. д.?
+ * И: В реальности система должна поддерживать все эти варианты. В рамках интервью можно ограничиться оплатой кредитными картами.
+ * К: Обрабатываем ли мы платежи по кредитным картам самостоятельно?
+ * И: Нет, мы используем стороннего провайдера — Stripe, Braintree, Square и т. п.
+ * К: Храним ли мы данные кредитных карт в нашей системе?
+ * И: По соображениям соответствия нормативным требованиям (compliance) мы не храним данные карт напрямую в своих системах. Мы полагаемся на сторонних платёжных процессоров.
+ * К: Приложение глобальное? Нужно ли поддерживать разные валюты и международные платежи?
+ * И: Приложение глобальное, но в рамках интервью будем считать, что используется только одна валюта.
+ * К: Сколько платёжных транзакций в день мы должны поддерживать?
+ * И: 1 млн транзакций в день.
+ * К: Нужно ли поддерживать поток выплат (pay-out), например ежемесячные выплаты получателям?
+ * И: Да, это нужно поддержать.
+ * К: Есть ли ещё что-то, на что стоит обратить внимание?
+ * И: Нужно поддерживать сверку (reconciliation), чтобы устранять любые несоответствия при взаимодействии с внутренними и внешними системами.
+
+### **Функциональные требования**
+ * Поток приёма платежей (pay-in) — платёжная система получает деньги от покупателей от имени продавцов
+ * Поток выплат (pay-out) — платёжная система отправляет деньги продавцам по всему миру
+
+### **Нефункциональные требования**
+ * Надёжность и отказоустойчивость. Неуспешные платежи необходимо тщательно обрабатывать
+ * Необходимо настроить сверку между внутренними и внешними системами.
+
+### **Оценка «на салфетке»**
+Система должна обрабатывать 1 млн транзакций в день, что составляет около 10 транзакций в секунду.
+
+Для любой СУБД это небольшая пропускная способность, поэтому на этом интервью она не в фокусе.
+
+---
+
+## Шаг 2: Предложить высокоуровневый дизайн и получить одобрение
+На высоком уровне в движении денег участвуют три стороны:
 
 <div style="margin-left:3rem">
-    <img src="./images/high-level-flow.png" alt="high-level-flow" width="500" />
+    <img src="./images/high-level-flow.png" alt="высокоуровневый поток" width="500" />
 </div>
 
-### **Pay-in flow**
-Here's the high-level overview of the pay-in flow:
+### **Поток приёма платежей (pay-in)**
+Вот высокоуровневый обзор потока приёма платежей:
 
 <div style="margin-left:3rem">
-    <img src="./images/payin-flow-high-level.png" alt="pay-in-flow-high-level" width="500" />
+    <img src="./images/payin-flow-high-level.png" alt="высокоуровневый поток приёма платежей" width="500" />
 </div>
 
- * Payment service - accepts payment events and coordinates the payment process. It typically also does a risk check using a third-party provider for AML violations or criminal activity.
- * Payment executor - executes a single payment order via the Payment Service Provider (PSP). Payment events may contain several payment orders.
- * Payment service provider (PSP) - moves money from one account to another, eg from buyer's credit card account to e-commerce site's bank account.
- * Card schemes - organizations that process credit card operations, eg Visa MasterCard, etc.
- * Ledger - keeps financial record of all payment transactions.
- * Wallet - keeps the account balance for all merchants.
+ * Платёжный сервис (payment service) — принимает платёжные события и координирует процесс оплаты. Как правило, он также выполняет проверку рисков через стороннего провайдера на предмет нарушений AML (Anti-Money Laundering — требования по противодействию отмыванию денег) или преступной деятельности.
+ * Исполнитель платежей (payment executor) — исполняет отдельное платёжное поручение (payment order) через поставщика платёжных услуг (Payment Service Provider, PSP). Платёжное событие может содержать несколько платёжных поручений.
+ * Поставщик платёжных услуг (PSP) — переводит деньги с одного счёта на другой, например с карточного счёта покупателя на банковский счёт e-commerce-площадки.
+ * Карточные платёжные системы (card schemes) — организации, обрабатывающие операции по кредитным картам, например Visa, MasterCard и т. д.
+ * Журнал операций, или леджер (ledger), — ведёт финансовый учёт всех платёжных транзакций.
+ * Кошелёк (wallet) — хранит баланс счёта каждого продавца.
 
-Here's an example pay-in flow:
- * user clicks "place order" and a payment event is sent to the payment service
- * payment service stores the event in its database
- * payment service calls the payment executor for all payment orders, part of that payment event
- * payment executor stores the payment order in its database
- * payment executor calls external PSP to process the credit card payment
- * After the payment executor processes the payment, the payment service updates the wallet to record how much money the seller has
- * wallet service stores updated balance information in its database
- * payment service calls the ledger to record all money movements
+Пример потока приёма платежа:
+ * пользователь нажимает «оформить заказ», и платёжное событие отправляется в платёжный сервис
+ * платёжный сервис сохраняет событие в своей базе данных
+ * платёжный сервис вызывает исполнителя платежей для каждого платёжного поручения, входящего в это платёжное событие
+ * исполнитель платежей сохраняет платёжное поручение в своей базе данных
+ * исполнитель платежей обращается к внешнему PSP для обработки платежа по кредитной карте
+ * после того как исполнитель платежей обработал платёж, платёжный сервис обновляет кошелёк, фиксируя, сколько денег есть у продавца
+ * сервис кошелька сохраняет обновлённую информацию о балансе в своей базе данных
+ * платёжный сервис вызывает леджер, чтобы зафиксировать все движения денег
 
-### **APIs for payment service**
+### **API платёжного сервиса**
 ```
 POST /v1/payments
 {
@@ -82,7 +84,7 @@ POST /v1/payments
 }
 ```
 
-Example `payment_order`:
+Пример `payment_order`:
 ```
 {
   "seller_account": "SELLER_IBAN",
@@ -92,240 +94,240 @@ Example `payment_order`:
 }
 ```
 
-Caveats:
- * The `payment_order_id` is forwarded to the PSP to deduplicate payments, ie it is the idempotency key.
- * The amount field is `string` as `double` is not appropriate for representing monetary values.
+Нюансы:
+ * `payment_order_id` передаётся в PSP для дедупликации платежей, т. е. это ключ идемпотентности (idempotency key).
+ * Поле amount имеет тип `string`, поскольку `double` не подходит для представления денежных сумм.
 
 ```
 GET /v1/payments/{:id}
 ```
 
-This endpoint returns the execution status of a single payment, based on the `payment_order_id`.
+Этот эндпоинт возвращает статус исполнения отдельного платежа по `payment_order_id`.
 
-### **Payment service data model**
-We need to maintain two tables - `payment_events` and `payment_orders`.
+### **Модель данных платёжного сервиса**
+Нам нужно вести две таблицы — `payment_events` и `payment_orders`.
 
-For payments, performance is typically not an important factor. Strong consistency, however, is.
+Для платежей производительность, как правило, не является важным фактором. А вот строгая согласованность (strong consistency) — является.
 
-Other considerations for choosing the database:
- * Strong market of DBAs to hire to administer the databaseS
- * Proven track-record where the database has been used by other big financial institutions
- * Richness of supporting tools
- * Traditional SQL over NoSQL/NewSQL for its ACID guarantees
+Другие соображения при выборе базы данных:
+ * Развитый рынок DBA (Database Administrator — администраторы баз данных), которых можно нанять для администрирования базы данных
+ * Проверенная репутация: база данных уже используется другими крупными финансовыми организациями
+ * Богатый набор вспомогательных инструментов
+ * Традиционная SQL-база (SQL — Structured Query Language, язык структурированных запросов) вместо NoSQL/NewSQL (NoSQL — Not only SQL, нереляционные базы данных) ради гарантий ACID (Atomicity, Consistency, Isolation, Durability — атомарность, согласованность, изолированность и долговечность транзакций)
 
-Here's what the `payment_events` table contains:
- * `checkout_id` - string, primary key
- * `buyer_info` - string (personal note - prob a foreign key to another table is more appropriate)
- * `seller_info` - string (personal note - same remark as above)
- * `credit_card_info` - depends on card provider
- * `is_payment_done` - boolean
+Вот что содержит таблица `payment_events`:
+ * `checkout_id` — string, первичный ключ
+ * `buyer_info` — string (личное замечание: вероятно, уместнее внешний ключ на другую таблицу)
+ * `seller_info` — string (личное замечание: то же, что и выше)
+ * `credit_card_info` — зависит от провайдера карт
+ * `is_payment_done` — boolean
 
-Here's what the `payment_orders` table contains:
- * `payment_order_id` - string, primary key
- * `buyer_account` - string
- * `amount` - string
- * `currency` - string
- * `checkout_id` - string, foreign key
- * `payment_order_status` - enum (`NOT_STARTED`, `EXECUTING`, `SUCCESS`, `FAILED`)
- * `ledger_updated` - boolean
- * `wallet_updated` - boolean
+Вот что содержит таблица `payment_orders`:
+ * `payment_order_id` — string, первичный ключ
+ * `buyer_account` — string
+ * `amount` — string
+ * `currency` — string
+ * `checkout_id` — string, внешний ключ
+ * `payment_order_status` — enum (`NOT_STARTED`, `EXECUTING`, `SUCCESS`, `FAILED`)
+ * `ledger_updated` — boolean
+ * `wallet_updated` — boolean
 
-Caveats:
- * there are many payment orders, linked to a given payment event
- * we don't need the `seller_info` for the pay-in flow. That's required on pay-out only
- * `ledger_updated` and `wallet_updated` are updated when the respective service is called to record the result of a payment
- * payment transitions are managed by a background job, which checks updates of in-flight payments and triggers an alert if a payment is not processed in a reasonable timeframe
+Нюансы:
+ * с одним платёжным событием связано множество платёжных поручений
+ * `seller_info` не нужен для потока приёма платежей — он требуется только при выплатах
+ * `ledger_updated` и `wallet_updated` обновляются, когда вызывается соответствующий сервис для фиксации результата платежа
+ * переходами состояний платежа управляет фоновая задача, которая отслеживает обновления платежей в процессе обработки и поднимает алерт, если платёж не обработан за разумное время
 
-### **Double-entry ledger system**
-The double-entry accounting mechanism is key to any payment system. It is a mechanism of tracking money movements by always applying money operations to two accounts, where one's account balance increases (credit) and the other decreases (debit):
+### **Система учёта с двойной записью (double-entry ledger)**
+Механизм двойной записи — ключевой элемент любой платёжной системы. Это способ отслеживания движения денег, при котором каждая денежная операция всегда применяется к двум счетам: на одном баланс увеличивается (кредит), на другом уменьшается (дебет):
 
-| Account | Debit | Credit |
+| Счёт | Дебет | Кредит |
 |---------|-------|--------|
-| buyer   | $1    |        |
-| seller  |       | $1     |
+| покупатель   | $1    |        |
+| продавец  |       | $1     |
 
-Sum of all transaction entries is always zero. This mechanism provides end-to-end traceability of all money movements within the system.
+Сумма всех проводок по транзакции всегда равна нулю. Этот механизм обеспечивает сквозную прослеживаемость всех движений денег внутри системы.
 
-### **Hosted payment page**
-To avoid storing credit card information and having to comply with various heavy regulations, most companies prefer utilizing a widget, provided by PSPs, which store and handle credit card payments for you:
+### **Размещённая платёжная страница (hosted payment page)**
+Чтобы не хранить данные кредитных карт и не выполнять многочисленные строгие регуляторные требования, большинство компаний предпочитают использовать виджет, предоставляемый PSP, который хранит данные карт и обрабатывает платежи за вас:
 
 <div style="margin-left:3rem">
-    <img src="./images/hosted-payment-page.png" alt="hosted-payment-page" width="500" />
+    <img src="./images/hosted-payment-page.png" alt="размещённая платёжная страница" width="500" />
 </div>
 
-### **Pay-out flow**
-The components of the pay-out flow are very similar to the pay-in flow.
+### **Поток выплат (pay-out)**
+Компоненты потока выплат очень похожи на компоненты потока приёма платежей.
 
-Main differences:
- * money is moved from e-commerce site's bank account to merchant's bank account
- * we can utilize a third-party account payable provider such as Tipalti
- * There's a lot of bookkeeping and regulatory requirements to handle with regards to pay-outs as well
+Основные отличия:
+ * деньги переводятся с банковского счёта e-commerce-площадки на банковский счёт продавца
+ * можно использовать стороннего провайдера расчётов с кредиторами (accounts payable), например Tipalti
+ * с выплатами также связано множество требований бухгалтерского учёта и регуляторики
 
 ---
 
-## Step 3: Design Deep Dive
-This section focuses on making the system faster, more robust and secure.
+## Шаг 3: Детальное проектирование
+В этом разделе речь пойдёт о том, как сделать систему быстрее, надёжнее и безопаснее.
 
-### **PSP Integration**
-If our system can directly connect to banks or card schemes, payment can be made without a PSP.
-These kinds of connections are very rare and uncommon, typically done at large companies which can justify the investment.
+### **Интеграция с PSP**
+Если наша система может напрямую подключаться к банкам или карточным платёжным системам, платёж можно провести без PSP.
+Такие подключения очень редки и нетипичны — обычно их делают крупные компании, способные оправдать такие инвестиции.
 
-If we go down the traditional route, a PSP can be integrated in one of two ways:
- * Through API, if our payment system can collect payment information
- * Through a hosted payment page to avoid dealing with payment information regulations
+Если идти традиционным путём, PSP можно интегрировать одним из двух способов:
+ * Через API (Application Programming Interface — программный интерфейс), если наша платёжная система может собирать платёжные данные
+ * Через размещённую платёжную страницу, чтобы не иметь дела с регулированием в отношении платёжных данных
 
-Here's how the hosted payment page workflow works:
-
-<div style="margin-left:3rem">
-    <img src="./images/hosted-payment-page-workflow.png" alt="hosted-payment-page-workflow" width="500" />
-</div>
-
- * User clicks "checkout" button in the browser
- * Client calls the payment service with the payment order information
- * After receiving payment order information, the payment service sends a payment registration request to the PSP.
- * The PSP receives payment info such as currency, amount, expiration, etc, as well as a UUID for idempotency purposes. Typically the UUID of the payment order.
- * The PSP returns a token back which uniquely identifies the payment registration. The token is stored in the payment service database.
- * Once token is stored, the user is served with a PSP-hosted payment page. It is initialized using the token as well as a redirect URL for success/failure. 
- * User fills in payment details on the PSP page, PSP processes payment and returns the payment status
- * User is now redirected back to the redirectURL. Example redirect url - `https://your-company.com/?tokenID=JIOUIQ123NSF&payResult=X324FSa`
- * Asynchronously, the PSP calls our payment service via a webhook to inform our backend of the payment result
- * Payment service records the payment result based on the webhook received
-
-### **Reconciliation**
-The previous section explains the happy path of a payment. Unhappy paths are detected and reconciled using a background reconciliation process.
-
-Every night, the PSP sends a settlement file which our system uses to compare the external system's state against our internal system's state.
+Вот как работает сценарий с размещённой платёжной страницей:
 
 <div style="margin-left:3rem">
-    <img src="./images/settlement-report.png" alt="settlement-report" width="500" />
+    <img src="./images/hosted-payment-page-workflow.png" alt="сценарий работы размещённой платёжной страницы" width="500" />
 </div>
 
-This process can also be used to detect internal inconsistencies between eg the ledger and the wallet services.
+ * Пользователь нажимает в браузере кнопку «оформить заказ» (checkout)
+ * Клиент вызывает платёжный сервис, передавая информацию о платёжном поручении
+ * Получив информацию о платёжном поручении, платёжный сервис отправляет в PSP запрос на регистрацию платежа.
+ * PSP получает платёжную информацию — валюту, сумму, срок действия и т. д., а также UUID (Universally Unique Identifier — универсальный уникальный идентификатор) для обеспечения идемпотентности. Как правило, это UUID платёжного поручения.
+ * PSP возвращает токен, однозначно идентифицирующий регистрацию платежа. Токен сохраняется в базе данных платёжного сервиса.
+ * После сохранения токена пользователю показывается платёжная страница, размещённая на стороне PSP. Она инициализируется токеном, а также URL-адресом (URL — Uniform Resource Locator, унифицированный указатель ресурса) перенаправления на случай успеха/неудачи. 
+ * Пользователь вводит платёжные данные на странице PSP, PSP обрабатывает платёж и возвращает его статус
+ * Затем пользователь перенаправляется обратно на redirectURL. Пример URL перенаправления — `https://your-company.com/?tokenID=JIOUIQ123NSF&payResult=X324FSa`
+ * Асинхронно PSP вызывает наш платёжный сервис через вебхук, чтобы сообщить бэкенду о результате платежа
+ * Платёжный сервис фиксирует результат платежа на основе полученного вебхука
 
-Mismatches are handled manually by the finance team. Mismatches are handled as:
- * classifiable, hence, it is a known mismatch which can be adjusted using a standard procedure
- * classifiable, but can't be automated. Manually adjusted by the finance team
- * unclassifiable. Manually investigated and adjusted by the finance team
+### **Сверка (reconciliation)**
+В предыдущем разделе описан «счастливый путь» (happy path) платежа. Нештатные сценарии выявляются и устраняются с помощью фонового процесса сверки.
 
-### **Handling payment processing delays**
-There are cases, where a payment can take hours to complete, although it typically takes seconds.
-
-This can happen due to:
- * a payment being flagged as high-risk and someone has to manually review it
- * credit card requires extra protection, eg 3D Secure Authentication, which requires extra details from card holder to complete
-
-These situations are handled by:
- * waiting for the PSP to send us a webhook when a payment is complete or polling its API if the PSP doesn't provide webhooks
- * showing a "pending" status to the user and giving them a page, where they can check-in for payment updates. We could also send them an email once their payment is complete
-
-### **Communication among internal services**
-There are two types of communication patterns services use to communicate with one another - synchronous and asynchronous.
-
-Synchronous communication (ie HTTP) works well for small-scale systems, but suffers as scale increases:
- * low performance - request-response cycle is long as more services get involved in the call chain
- * poor failure isolation - if PSPs or any other service fails, user will not receive a response
- * tight coupling - sender needs to know the receiver
- * hard to scale - not easy to support sudden increase in traffic due to not having a buffer
-
-Asynchronous communication can be divided into two categories.
-
-Single receiver - multiple receivers subscribe to the same topic and messages are processed only once:
+Каждую ночь PSP присылает файл расчётов (settlement file), по которому наша система сравнивает состояние внешней системы с состоянием внутренней.
 
 <div style="margin-left:3rem">
-    <img src="./images/single-receiver.png" alt="single-receiver" width="500" />
+    <img src="./images/settlement-report.png" alt="отчёт о расчётах" width="500" />
 </div>
 
-Multiple receivers - multiple receivers subscribe to the same topic, but messages are forwarded to all of them:
+Этот процесс также можно использовать для выявления внутренних несоответствий, например между сервисами леджера и кошелька.
+
+Расхождения обрабатываются вручную финансовой командой. Расхождения делятся на следующие категории:
+ * классифицируемые — то есть известное расхождение, которое можно скорректировать по стандартной процедуре
+ * классифицируемые, но не поддающиеся автоматизации — корректируются финансовой командой вручную
+ * неклассифицируемые — вручную расследуются и корректируются финансовой командой
+
+### **Обработка задержек при проведении платежей**
+Бывают случаи, когда проведение платежа занимает часы, хотя обычно на это уходят секунды.
+
+Так может произойти, если:
+ * платёж помечен как высокорисковый, и его должен вручную проверить сотрудник
+ * для кредитной карты требуется дополнительная защита, например аутентификация 3D Secure, для завершения которой держатель карты должен предоставить дополнительные данные
+
+Такие ситуации обрабатываются следующим образом:
+ * ожидаем, пока PSP пришлёт вебхук о завершении платежа, либо опрашиваем его API, если PSP не поддерживает вебхуки
+ * показываем пользователю статус «в обработке» и даём ему страницу, где можно отслеживать обновления по платежу. Также можно отправить ему письмо, когда платёж завершится
+
+### **Взаимодействие внутренних сервисов**
+Существует два типа взаимодействия сервисов друг с другом — синхронный и асинхронный.
+
+Синхронное взаимодействие (т. е. HTTP — HyperText Transfer Protocol, протокол передачи гипертекста) хорошо работает в небольших системах, но с ростом масштаба начинает страдать:
+ * низкая производительность — цикл «запрос-ответ» удлиняется по мере того, как в цепочку вызовов вовлекается всё больше сервисов
+ * слабая изоляция отказов — если PSP или любой другой сервис отказывает, пользователь не получит ответа
+ * сильная связанность — отправителю нужно знать получателя
+ * сложность масштабирования — из-за отсутствия буфера трудно выдерживать внезапный рост трафика
+
+Асинхронное взаимодействие можно разделить на две категории.
+
+Один получатель — несколько получателей подписаны на один и тот же топик, и каждое сообщение обрабатывается только один раз:
 
 <div style="margin-left:3rem">
-    <img src="./images/multiple-receiver.png" alt="multiple-receiver" width="500" />
+    <img src="./images/single-receiver.png" alt="один получатель" width="500" />
 </div>
 
-Latter model works well for our payment system as a payment can trigger multiple side effects, handled by different services.
-
-In a nutshell, synchronous communication is simpler but doesn't allow services to be autonomous. 
-Async communication trades simplicity and consistency for scalability and resilience.
-
-### **Handling failed payments**
-Every payment system needs to address failed payments. Here are some of the mechanism we'll use to achieve that:
- * Tracking payment state - whenever a payment fails, we can determine whether to retry/refund based on the payment state.
- * Retry queue - payments which we'll retry are published to a retry queue
- * Dead-letter queue - payments which have terminally failed are pushed to a dead-letter queue, where the failed payment can be debugged and inspected.
+Несколько получателей — несколько получателей подписаны на один и тот же топик, но сообщения доставляются всем им:
 
 <div style="margin-left:3rem">
-    <img src="./images/failed-payments.png" alt="failed-payments" width="500" />
+    <img src="./images/multiple-receiver.png" alt="несколько получателей" width="500" />
 </div>
 
-### **Exactly-once delivery**
-We need to ensure a payment gets processed exactly-once to avoid double-charging a customer.
+Вторая модель хорошо подходит для нашей платёжной системы, поскольку платёж может вызывать несколько побочных эффектов, которые обрабатываются разными сервисами.
 
-An operation is executed exactly-once if it is executed at-least-once and at-most-once at the same time.
+Если коротко, синхронное взаимодействие проще, но не позволяет сервисам быть автономными. 
+Асинхронное взаимодействие жертвует простотой и согласованностью ради масштабируемости и устойчивости.
 
-To achieve the at-least-once guarantee, we'll use a retry mechanism:
+### **Обработка неуспешных платежей**
+Каждая платёжная система должна уметь обрабатывать неуспешные платежи. Вот некоторые механизмы, которые мы для этого используем:
+ * Отслеживание состояния платежа — при каждом сбое платежа мы можем по его состоянию определить, нужно ли повторить попытку или вернуть средства.
+ * Очередь повторных попыток (retry queue) — платежи, которые мы будем повторять, публикуются в очередь повторных попыток
+ * Очередь недоставленных сообщений (dead-letter queue) — платежи, завершившиеся окончательным сбоем, отправляются в dead-letter queue, где неуспешный платёж можно отладить и изучить.
 
 <div style="margin-left:3rem">
-    <img src="./images/retry-mechanism.png" alt="retry-mechanism" width="500" />
+    <img src="./images/failed-payments.png" alt="неуспешные платежи" width="500" />
 </div>
 
-Here are some common strategies on deciding the retry intervals:
- * immediate retry - client immediately sends another request after failure
- * fixed intervals - wait a fixed amount of time before retrying a payment
- * incremental intervals - incrementally increase retry interval between each retry
- * exponential back-off - double retry interval between subsequent retries
- * cancel - client cancels the request. This happens when the error is terminal or retry threshold is reached
+### **Доставка ровно один раз (exactly-once)**
+Нужно гарантировать, что платёж будет обработан ровно один раз, чтобы не списать деньги с покупателя дважды.
 
-As a rule of thumb, default to an exponential back-off retry strategy. A good practice is for the server to specify a retry interval using a `Retry-After` header.
+Операция выполняется ровно один раз, если она одновременно выполняется как минимум один раз (at-least-once) и не более одного раза (at-most-once).
 
-An issue with retries is that the server can potentially process a payment twice:
- * client clicks the "pay button" twice, hence, they are charged twice
- * payment is successfully processed by PSP, but not by downstream services (ledger, wallet). Retry causes the payment to be processed by the PSP again
-
-To address the double payment problem, we need to use an idempotency mechanism - a property that an operation applied multiple times is processed only once.
-
-From an API perspective, clients can make multiple calls which produce the same result. 
-Idempotency is managed by a special header in the request (eg `idempotency-key`), which is typically a UUID.
+Для обеспечения гарантии at-least-once используем механизм повторных попыток:
 
 <div style="margin-left:3rem">
-    <img src="./images/idempotency-example.png" alt="idempotency-example" width="500" />
+    <img src="./images/retry-mechanism.png" alt="механизм повторных попыток" width="500" />
 </div>
 
-Idempotency can be achieved using the database's mechanism of adding unique key constraints:
- * server attempts to insert a new row in the database
- * the insertion fails due to a unique key constraint violation
- * server detects that error and instead returns the existing object back to the client
+Вот несколько распространённых стратегий выбора интервалов между повторными попытками:
+ * немедленный повтор — клиент сразу же отправляет новый запрос после сбоя
+ * фиксированные интервалы — перед повтором платежа выжидается фиксированное время
+ * инкрементальные интервалы — интервал увеличивается с каждой следующей попыткой
+ * экспоненциальная задержка (exponential back-off) — интервал удваивается с каждой последующей попыткой
+ * отмена — клиент отменяет запрос. Это происходит, если ошибка окончательная или достигнут порог числа повторных попыток
 
-Idempotency is also applied at the PSP side, using the nonce, which was previously discussed. PSPs will take care to not process payments with the same nonce twice.
+Как правило, по умолчанию стоит использовать стратегию экспоненциальной задержки. Хорошая практика — когда сервер сам указывает интервал повтора в заголовке `Retry-After`.
 
-### **Consistency**
-There are several stateful services called throughout a payment's lifecycle - PSP, ledger, wallet, payment service.
+Проблема повторных попыток в том, что сервер потенциально может обработать платёж дважды:
+ * клиент дважды нажимает кнопку «оплатить», и с него дважды списываются деньги
+ * платёж успешно обработан PSP, но не нижестоящими сервисами (леджером, кошельком). Повторная попытка приводит к тому, что PSP обрабатывает платёж ещё раз
 
-Communication between any two services can fail. 
-We can ensure eventual data consistency between all services by implementing exactly-once processing and reconciliation.
+Чтобы решить проблему двойной оплаты, нужен механизм идемпотентности — свойство, при котором операция, применённая несколько раз, обрабатывается только один раз.
 
-If we use replication, we'll have to deal with replication lag, which can lead to users observing inconsistent data between primary and replica databases.
+С точки зрения API клиенты могут делать несколько вызовов, которые приводят к одному и тому же результату. 
+Идемпотентность обеспечивается специальным заголовком в запросе (например, `idempotency-key`), значение которого обычно является UUID.
 
-To mitigate that, we can serve all reads and writes from the primary database and only utilize replicas for redundancy and fail-over.
-Alternatively, we can ensure replicas are always in-sync by utilizing a consensus algorithm such as Paxos or Raft.
-We could also use a consensus-based distributed database such as YugabyteDB or CockroachDB.
+<div style="margin-left:3rem">
+    <img src="./images/idempotency-example.png" alt="пример идемпотентности" width="500" />
+</div>
 
-### **Payment security**
-Here are some mechanisms we can use to ensure payment security:
- * Request/response eavesdropping - we can use HTTPS to secure all communication
- * Data tampering - enforce encryption and integrity monitoring
- * Man-in-the-middle attacks - use SSL \w certificate pinning
- * Data loss - replicate data across multiple regions and take data snapshots
- * DDoS attack - implement rate limiting and firewall
- * Card theft - use tokens instead of storing real card information in our system
- * PCI compliance - a security standard for organizations which handle branded credit cards
- * Fraud - address verification, card verification value (CVV), user behavior analysis, etc
+Идемпотентности можно добиться с помощью механизма ограничений уникальности ключа в базе данных:
+ * сервер пытается вставить новую строку в базу данных
+ * вставка завершается ошибкой из-за нарушения ограничения уникальности ключа
+ * сервер обнаруживает эту ошибку и вместо этого возвращает клиенту уже существующий объект
+
+Идемпотентность применяется и на стороне PSP — с помощью nonce, о котором говорилось ранее. PSP следят за тем, чтобы не обрабатывать дважды платежи с одним и тем же nonce.
+
+### **Согласованность**
+На протяжении жизненного цикла платежа вызывается несколько сервисов с состоянием (stateful) — PSP, леджер, кошелёк, платёжный сервис.
+
+Взаимодействие между любыми двумя сервисами может завершиться сбоем. 
+Мы можем обеспечить согласованность в конечном счёте (eventual consistency) между всеми сервисами, реализовав обработку ровно один раз и сверку.
+
+Если используется репликация, придётся иметь дело с задержкой репликации (replication lag), из-за которой пользователи могут видеть несогласованные данные в основной базе и репликах.
+
+Чтобы смягчить эту проблему, можно обслуживать все чтения и записи из основной (primary) базы данных, а реплики использовать только для резервирования и переключения при отказе (fail-over).
+Другой вариант — гарантировать постоянную синхронизацию реплик с помощью алгоритма консенсуса, например Paxos или Raft.
+Также можно использовать распределённую базу данных на основе консенсуса, например YugabyteDB или CockroachDB.
+
+### **Безопасность платежей**
+Вот некоторые механизмы, с помощью которых можно обеспечить безопасность платежей:
+ * Перехват запросов/ответов — используем HTTPS (HTTP Secure — HTTP поверх зашифрованного соединения) для защиты всех коммуникаций
+ * Подмена данных — применяем шифрование и контроль целостности
+ * Атаки «человек посередине» (man-in-the-middle) — используем SSL (Secure Sockets Layer — протокол защищённого соединения) с закреплением сертификатов (certificate pinning)
+ * Потеря данных — реплицируем данные в несколько регионов и делаем снапшоты данных
+ * DDoS-атака (Distributed Denial of Service — распределённая атака типа «отказ в обслуживании») — внедряем ограничение частоты запросов (rate limiting) и межсетевой экран
+ * Кража данных карт — используем токены вместо хранения реальных данных карт в нашей системе
+ * Соответствие PCI (PCI compliance; PCI — Payment Card Industry, индустрия платёжных карт) — стандарт безопасности для организаций, работающих с брендированными кредитными картами
+ * Мошенничество — проверка адреса, проверочный код карты (CVV — Card Verification Value), анализ поведения пользователей и т. д.
 
 ---
 
-## Step 4: Wrap Up
-Other talking points:
- * Monitoring and alerting
- * Debugging tools - we need tools which make it easy to understand why a payment has failed
- * Currency exchange - important when designing a payment system for international use
- * Geography - different regions might have different payment methods
- * Cash payment - very common in places like India and Brazil
- * Google/Apple Pay integration
+## Шаг 4: Подведение итогов
+Другие темы для обсуждения:
+ * Мониторинг и алертинг
+ * Инструменты отладки — нужны инструменты, позволяющие легко понять, почему платёж не прошёл
+ * Конвертация валют — важна при проектировании платёжной системы для международного использования
+ * География — в разных регионах могут использоваться разные способы оплаты
+ * Оплата наличными — очень распространена, например, в Индии и Бразилии
+ * Интеграция с Google Pay/Apple Pay

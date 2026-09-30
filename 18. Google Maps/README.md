@@ -1,162 +1,164 @@
-# Chapter 18: Google Maps
+**Русский** | [English](./README.en.md)
 
-## Introduction
+# Глава 18: Google Maps
 
-We'll design a simple version of **Google Maps**.
+## Введение
 
-Some facts about google maps:
- * Started in 2005
- * Provides various services - satellite imagery, street maps, real-time traffic conditions, route planning
- * By 2021, had 1bil daily active users, 99% coverage of the world, 25mil updates daily of real-time location info
+Мы спроектируем упрощённую версию **Google Maps**.
 
----
-
-## Step 1: Understand the Problem and Establish Design Scope
-
-Sample Q&A between candidate and interviewer:
- * C: How many daily active users are we dealing with?
- * I: 1bil DAU
- * C: What features should we focus on?
- * I: Location update, navigation, ETA, map rendering
- * C: How large is road data? Do we have access to it?
- * I: We obtained road data from various sources, it's TBs of raw data
- * C: Should we take traffic conditions into consideration?
- * I: Yes, we should for accurate time estimations
- * C: How about different travel modes - by foot, biking, driving?
- * I: We should support those
- * C: How about multi-stop directions?
- * I: Let's not focus on that for scope of interview
- * C: Business places and photos?
- * I: Good question, but no need to consider those
-
-We'll focus on three key features - user location update, navigation service including ETA, map rendering.
-
-### **Non-functional requirements**
-
-- **Accuracy**: user shouldn't get wrong directions
-- **Smooth navigation**: Users should experience smooth map rendering
-- **Data and battery usage**: Client should use as little data and battery as possible. Important for mobile devices.
-- General availability and scalability requirements
-
-### **Map 101**
-
-Before jumping into the design, there are some map-related concepts we should understand.
-
-#### Positioning system
-
-World is a sphere, rotating on its axis. Positiions are defined by latitude (how far north/south you are) and longitude (how far east/west you are):
-
-<div style="margin-left:3rem">
-    <img src="./images/partitioning-system.png" alt="partitioning-system" width="500" />
-</div>
-
-#### Going from 3D to 2D
-
-The process of translating points from 3D to 2D plane is called "map projection".
-
-There are different ways to do it and each comes with its pros and cons. Almost all distort the actual geometry.
-
-<div style="margin-left:3rem">
-    <img src="./images/map-projections.png" alt="map-projections" width="500" />
-</div>
-
-Google maps selected a modified version of Mercator projection called "Web Mercator".
-
-#### Geocoding
-
-Geocoding is the process of converting addresses to geographic coordinates. 
-
-The reverse process is called "reverse geocoding".
-
-One way to achieve this is to use interpolation - leveraging data from different sources (eg GIS-es) where street network is mapped to geo coordinate space.
-
-#### Geohashing
-
-Geohashing is an encoding system which encodes a geographic area into a string of letters and digits.
-
-It depicts the world as a flattened surface and recursively sub-divides it into four quadrants:
-
-<div style="margin-left:3rem">
-    <img src="./images/geohashing.png" alt="geohashing" width="500" />
-</div>
-
-#### Map rendering
-
-Map rendering happens via tiling. Instead of rendering entire map as one big custom image, world is broken up into smaller tiles.
-
-Client only downloads relevant tiles and renders them like stitching together a mosaic.
-
-There are different tiles for different zoom levels. Client chooses appropriate tiles based on the client's zoom level.
-
-Eg, zooming out the entire world would download only a single 256x256 tile, representing the whole world.
-
-#### Road data processing for navigation algorithms
-
-In most routing algorithms, intersections are represented as nodes and roads are represented as edges:
-
-<div style="margin-left:3rem">
-    <img src="./images/road-representation.png" alt="road-representation" width="500" />
-</div>
-
-Most navigation algorithms use a modified version of Djikstra or A* algorithms.
-
-Pathfinding performance is sensitive to the size of the graph. To work at scale, we can't represent the whole world as a graph and run the algorithm on it.
-
-Instead, we use a technique similar to tiling - we subdivide the world into smaller and smaller graphs.
-
-Routing tiles hold references to neighboring tiles and algorithms can stitch together a bigger road graph as it traverses interconnected tiles:
-
-<div style="margin-left:3rem">
-    <img src="./images/routing-tiles.png" alt="routing-tiles" width="500" />
-</div>
-
-This technique enables us to significantly reduce memory bandwidth and only load the tiles we need for the given source/destination pair.
-
-However, for larger routes, stitching together small, detailed routing tiles would still be time/memory consuming. Instead, there are routing tiles with different level of detail and the algorithm uses the appropriately-detailed tiles, based on the destination we're headed for:
-
-<div style="margin-left:3rem">
-    <img src="./images/map-routing-hierarchical.png" alt="map-routing-hierarchical" width="500" />
-</div>
-
-### **Back-of-the-envelope estimation**
-
-For storage, we need to store:
- * map of the world - estimated as ~70pb based on all the tiles we need to store, but factoring in compression of very similar tiles (eg vast desert)
- * metadata - negligible in size, so we can skip it from calculation
- * Road info - stored as routing tiles
-
-Estimated QPS for navigation requests - 1bil DAU at 35min of usage per week -> 5bil minutes per day. 
-Assuming gps update requests are batched, we arrive at 200k QPS and 1mil QPS at peak load
+Несколько фактов о Google Maps:
+ * Запущены в 2005 году
+ * Предоставляют различные сервисы — спутниковые снимки, карты улиц, информацию о дорожной ситуации в реальном времени, планирование маршрутов
+ * К 2021 году — 1 млрд активных пользователей в день, покрытие 99% мира, 25 млн обновлений информации о местоположении в реальном времени ежедневно
 
 ---
 
-## Step 2: Propose High-Level Design and Get Buy-In
+## Шаг 1: Понимание задачи и определение границ дизайна
+
+Пример диалога между кандидатом (К) и интервьюером (И):
+ * К: Сколько активных пользователей в день нужно поддерживать?
+ * И: 1 млрд DAU (Daily Active Users — число уникальных активных пользователей за день)
+ * К: На каких функциях стоит сосредоточиться?
+ * И: Обновление местоположения, навигация, ETA (Estimated Time of Arrival — расчётное время прибытия), отрисовка карты
+ * К: Каков объём данных о дорогах? Есть ли у нас к ним доступ?
+ * И: Данные о дорогах получены из разных источников — это терабайты сырых данных
+ * К: Нужно ли учитывать дорожную ситуацию?
+ * И: Да, это нужно для точной оценки времени в пути
+ * К: Как насчёт разных способов передвижения — пешком, на велосипеде, на автомобиле?
+ * И: Их нужно поддерживать
+ * К: А маршруты с несколькими остановками?
+ * И: В рамках интервью на этом не будем фокусироваться
+ * К: Заведения и фотографии?
+ * И: Хороший вопрос, но их учитывать не нужно
+
+Сосредоточимся на трёх ключевых функциях: обновление местоположения пользователя, сервис навигации с расчётом ETA и отрисовка карты.
+
+### **Нефункциональные требования**
+
+- **Точность**: пользователь не должен получать неверные маршруты
+- **Плавная навигация**: карта у пользователей должна отрисовываться плавно
+- **Расход трафика и батареи**: клиент должен расходовать как можно меньше трафика и заряда батареи. Это важно для мобильных устройств.
+- Общие требования к доступности и масштабируемости
+
+### **Основы картографии (Map 101)**
+
+Прежде чем переходить к дизайну, разберём несколько понятий, связанных с картами.
+
+#### Система позиционирования
+
+Земля — это сфера, вращающаяся вокруг своей оси. Положение задаётся широтой (насколько далеко на север/юг вы находитесь) и долготой (насколько далеко на восток/запад):
 
 <div style="margin-left:3rem">
-    <img src="./images/high-level-design.png" alt="high-level-design" width="500" />
+    <img src="./images/partitioning-system.png" alt="система позиционирования" width="500" />
 </div>
 
-### **Location service**
+#### Переход от 3D к 2D
+
+Процесс переноса точек из трёхмерного пространства на двумерную плоскость называется «картографической проекцией» (map projection).
+
+Существуют разные способы сделать это, и у каждого свои плюсы и минусы. Почти все они искажают реальную геометрию.
 
 <div style="margin-left:3rem">
-    <img src="./images/location-service.png" alt="location-service" width="500" />
+    <img src="./images/map-projections.png" alt="картографические проекции" width="500" />
 </div>
 
-It is responsible for recording a user's location updates:
- * location updates are sent every `t` seconds
- * location data streams can be used to improve the service over time, eg provide more accurate ETAs, monitor traffic data, detect closed roads, analyze user behavior, etc
+Google Maps выбрали модифицированную версию проекции Меркатора под названием «Web Mercator».
 
-Instead of sending location updates to the server all the time, we can batch the updates on the client-side and send batches instead:
+#### Геокодирование
+
+Геокодирование (geocoding) — это процесс преобразования адресов в географические координаты.
+
+Обратный процесс называется «обратным геокодированием» (reverse geocoding).
+
+Один из способов реализации — интерполяция с использованием данных из разных источников (например, ГИС — геоинформационных систем, GIS — Geographic Information Systems), в которых уличная сеть сопоставлена с пространством географических координат.
+
+#### Геохеширование
+
+Геохеширование (geohashing) — это система кодирования, которая кодирует географическую область в строку из букв и цифр.
+
+Она представляет мир как плоскую поверхность и рекурсивно делит её на четыре квадранта:
 
 <div style="margin-left:3rem">
-    <img src="./images/location-update-batches.png" alt="location-update-batches" width="500" />
+    <img src="./images/geohashing.png" alt="геохеширование" width="500" />
 </div>
 
-Despite this optimization, for a system of Google Maps scale, load will still be significant. Therefore, we can leverage a database, optimized for heavy writes such as Cassandra.
+#### Отрисовка карты
 
-We can also leverage Kafka for efficient stream processing of location updates, meant for further analysis.
+Отрисовка карты выполняется с помощью тайлов (tiling). Вместо того чтобы отрисовывать всю карту как одно большое изображение, мир разбивается на небольшие тайлы.
 
-Example location update request payload:
+Клиент скачивает только нужные тайлы и отрисовывает их, складывая, как мозаику.
+
+Для разных уровней масштаба (zoom level) существуют разные тайлы. Клиент выбирает подходящие тайлы в зависимости от текущего уровня масштаба.
+
+Например, при максимальном отдалении, когда виден весь мир, скачивается лишь один тайл размером 256x256, представляющий весь мир.
+
+#### Обработка данных о дорогах для навигационных алгоритмов
+
+В большинстве алгоритмов маршрутизации перекрёстки представляются узлами, а дороги — рёбрами графа:
+
+<div style="margin-left:3rem">
+    <img src="./images/road-representation.png" alt="представление дорог" width="500" />
+</div>
+
+Большинство навигационных алгоритмов используют модифицированные версии алгоритма Дейкстры или A*.
+
+Производительность поиска пути зависит от размера графа. Чтобы работать в большом масштабе, нельзя представить весь мир одним графом и запускать алгоритм на нём.
+
+Вместо этого используется приём, похожий на тайлинг: мир делится на всё более мелкие графы.
+
+Тайлы маршрутизации (routing tiles) хранят ссылки на соседние тайлы, и алгоритм может «сшивать» из них более крупный граф дорог по мере обхода связанных тайлов:
+
+<div style="margin-left:3rem">
+    <img src="./images/routing-tiles.png" alt="тайлы маршрутизации" width="500" />
+</div>
+
+Этот приём позволяет значительно снизить нагрузку на пропускную способность памяти и загружать только те тайлы, которые нужны для данной пары «откуда/куда».
+
+Однако для длинных маршрутов «сшивание» небольших детализированных тайлов маршрутизации всё равно будет затратным по времени и памяти. Поэтому существуют тайлы маршрутизации с разным уровнем детализации, и алгоритм использует тайлы подходящей детализации в зависимости от пункта назначения:
+
+<div style="margin-left:3rem">
+    <img src="./images/map-routing-hierarchical.png" alt="иерархическая маршрутизация" width="500" />
+</div>
+
+### **Грубая оценка (Back-of-the-envelope estimation)**
+
+Для хранения нужно сохранять:
+ * карту мира — оценивается примерно в ~70 ПБ с учётом всех тайлов, которые нужно хранить, и сжатия очень похожих тайлов (например, обширных пустынь)
+ * метаданные — пренебрежимо малы по объёму, поэтому их можно не учитывать в расчётах
+ * информацию о дорогах — хранится в виде тайлов маршрутизации
+
+Оценка QPS (Queries Per Second — запросов в секунду) для навигационных запросов: 1 млрд DAU при 35 минутах использования в неделю -> 5 млрд минут в день.
+Если запросы с обновлениями GPS (Global Positioning System — глобальная система позиционирования) отправляются пакетами, получаем 200 тыс. QPS и 1 млн QPS в пиковой нагрузке
+
+---
+
+## Шаг 2: Высокоуровневый дизайн и согласование
+
+<div style="margin-left:3rem">
+    <img src="./images/high-level-design.png" alt="высокоуровневый дизайн" width="500" />
+</div>
+
+### **Сервис местоположения (Location service)**
+
+<div style="margin-left:3rem">
+    <img src="./images/location-service.png" alt="сервис местоположения" width="500" />
+</div>
+
+Он отвечает за запись обновлений местоположения пользователя:
+ * обновления местоположения отправляются каждые `t` секунд
+ * потоки данных о местоположении можно использовать для постепенного улучшения сервиса, например, для более точного ETA, мониторинга дорожной ситуации, обнаружения перекрытых дорог, анализа поведения пользователей и т. д.
+
+Вместо того чтобы постоянно отправлять на сервер каждое обновление местоположения, можно накапливать обновления на клиенте и отправлять их пакетами:
+
+<div style="margin-left:3rem">
+    <img src="./images/location-update-batches.png" alt="пакеты обновлений местоположения" width="500" />
+</div>
+
+Несмотря на эту оптимизацию, для системы масштаба Google Maps нагрузка всё равно будет значительной. Поэтому можно использовать базу данных, оптимизированную под интенсивную запись, например Cassandra.
+
+Также можно использовать Kafka для эффективной потоковой обработки обновлений местоположения, предназначенных для дальнейшего анализа.
+
+Пример тела запроса на обновление местоположения:
 
 ```
 POST /v1/locations
@@ -164,17 +166,17 @@ Parameters
   locs: JSON encoded array of (latitude, longitude, timestamp) tuples.
 ```
 
-### **Navigation service**
+### **Сервис навигации (Navigation service)**
 
-This component is responsible for finding fast routes between A and B in a reasonable time (a little bit of latency is okay). Route need not be the fastest, but accuracy is important.
+Этот компонент отвечает за поиск быстрых маршрутов из точки A в точку B за разумное время (небольшая задержка допустима). Маршрут не обязан быть самым быстрым, но важна точность.
 
-Example request payload:
+Пример запроса:
 
 ```
 GET /v1/nav?origin=1355+market+street,SF&destination=Disneyland
 ```
 
-Example response:
+Пример ответа:
 
 ```json
 {
@@ -202,144 +204,144 @@ Example response:
 }
 ```
 
-Traffic changes and reroutes are not taken into consideration yet, those will be tackled in the deep dive section.
+Изменения дорожной ситуации и перестроение маршрутов пока не учитываются — ими займёмся в разделе детального разбора.
 
-### **Map rendering**
+### **Отрисовка карты**
 
-Holding the entire data set of mapping tiles on the client-side is not feasible as it's petabytes in size.
+Хранить весь набор тайлов карты на клиенте невозможно, поскольку его объём исчисляется петабайтами.
 
-They need to be fetched on-demand from the server, based on the client's location and zoom level.
+Тайлы нужно загружать с сервера по запросу, в зависимости от местоположения клиента и уровня масштаба.
 
-When should new tiles be fetched - while user is zooming in/out and during navigation, while they're going towards a new tile.
+Когда нужно загружать новые тайлы: когда пользователь приближает/отдаляет карту, а также во время навигации, когда он перемещается в область нового тайла.
 
-How should the map tiles be served to the client?
- * They can be built dynamically, but that puts a huge load on the server and also makes caching hard
- * Map tiles are served statically, based on their geohash, which a client can calculate. They can be statically stored & served from a CDN
+Как отдавать тайлы карты клиенту?
+ * Их можно формировать динамически, но это создаёт огромную нагрузку на сервер и к тому же затрудняет кеширование
+ * Тайлы карты отдаются статически по их geohash, который клиент может вычислить сам. Их можно хранить статически и раздавать через CDN (Content Delivery Network — сеть доставки контента)
 
 <div style="margin-left:3rem">
-    <img src="./images/static-map-tiles.png" alt="static-map-tiles" width="500" />
+    <img src="./images/static-map-tiles.png" alt="статические тайлы карты" width="500" />
 </div>
 
-CDNs enable users to fetch map tiles from point-of-presence servers (POP) which are closest to users in order to minimize latency:
+CDN позволяют пользователям загружать тайлы карты с ближайших к ним серверов точек присутствия (point of presence, POP), чтобы минимизировать задержку:
 
 <div style="margin-left:3rem">
-    <img src="./images/cdn-vs-no-cdn.png" alt="cdn-vs-no-cdn" width="500" />
+    <img src="./images/cdn-vs-no-cdn.png" alt="с CDN и без CDN" width="500" />
 </div>
 
-Options to consider for determining map tiles:
- * geohash for map tile can be calculated on the client-side. If that's the case, we should be careful that we commit to this type of map tile calculation for the long-term as forcing clients to update is hard
- * alternatively, we can have simple API which calculates the map tile URLs on behalf of the clients at the cost of additional API call
+Варианты определения нужных тайлов карты:
+ * geohash тайла можно вычислять на стороне клиента. В этом случае нужно учитывать, что мы надолго привязываемся к такому способу вычисления тайлов, поскольку заставить клиентов обновиться сложно
+ * в качестве альтернативы можно сделать простой API (Application Programming Interface — программный интерфейс), который вычисляет URL (Uniform Resource Locator — адрес ресурса) тайлов карты за клиентов ценой дополнительного вызова API
 
 <div style="margin-left:3rem">
-    <img src="./images/map-tile-url-calculation.png" alt="map-tile-url-calculation" width="500" />
+    <img src="./images/map-tile-url-calculation.png" alt="вычисление URL тайлов карты" width="500" />
 </div>
 
 ---
 
-## Step 3: Design Deep Dive
+## Шаг 3: Детальный разбор дизайна
 
-### **Data model**
+### **Модель данных**
 
-Let's discuss how we store the different types of data we're dealing with.
+Обсудим, как хранить различные типы данных, с которыми мы работаем.
 
-#### Routing tiles
+#### Тайлы маршрутизации
 
-Initial road data set is obtained from different sources. It is improved over time based on location updates data.
+Исходный набор данных о дорогах получен из разных источников. Со временем он улучшается на основе данных об обновлениях местоположения.
 
-The road data is unstructured. We have a periodic offline processing pipeline, which transforms this raw data into the graph-based routing tiles our app needs.
+Данные о дорогах неструктурированы. У нас есть периодический офлайн-конвейер обработки (pipeline), который преобразует эти сырые данные в графовые тайлы маршрутизации, нужные приложению.
 
-Instead of storing these tiles in a database as we don't need any database features. We can store them in S3 object storage, while caching them agressively.
+Хранить эти тайлы в базе данных не нужно, поскольку никакие возможности БД (DB — database, база данных) нам не требуются. Их можно хранить в объектном хранилище S3 (Amazon Simple Storage Service — облачное объектное хранилище Amazon), агрессивно кешируя.
 
-We can also leverage libraries to compress adjacency lists into binary files efficiently.
+Также можно использовать библиотеки для эффективного сжатия списков смежности в бинарные файлы.
 
-#### User location data
+#### Данные о местоположении пользователей
 
-User location data is very useful for updaring traffic conditions and doing all sorts of other analysis.
+Данные о местоположении пользователей очень полезны для обновления информации о дорожной ситуации и для всевозможной другой аналитики.
 
-We can use Cassandra for storing this kind of data as its nature is to be write-heavy.
+Для хранения таких данных можно использовать Cassandra, поскольку по своей природе нагрузка здесь — с интенсивной записью.
 
-Example row:
-
-<div style="margin-left:3rem">
-    <img src="./images/user-location-data-torw.png" alt="user-location-data-row" width="500" />
-</div>
-
-#### Geocoding database
-
-This database stores a key-value pair of lat/long pairs and places.
-
-We can use Redis for its fast read access speed, as we have frequent read and infrequent writes.
-
-#### Precomputed images of the world map
-
-As we discussed, we will precompute map tiling images and store them in CDN.
+Пример строки:
 
 <div style="margin-left:3rem">
-    <img src="./images/precomputed-map-tile-image.png" alt="precomputed-map-tile-image" width="500" />
+    <img src="./images/user-location-data-torw.png" alt="строка данных о местоположении пользователя" width="500" />
 </div>
 
-### **Services**
+#### База данных геокодирования
 
-#### Location service
+Эта база данных хранит пары «ключ — значение»: пары широта/долгота и соответствующие места.
 
-Let's focus on the database design and how user location is stored in detail for this service.
+Можно использовать Redis благодаря высокой скорости чтения, поскольку чтения частые, а записи редкие.
+
+#### Предварительно вычисленные изображения карты мира
+
+Как уже обсуждалось, мы заранее вычисляем изображения тайлов карты и храним их в CDN.
 
 <div style="margin-left:3rem">
-    <img src="./images/location-service-diagram.png" alt="location-service-diagram" width="500" />
+    <img src="./images/precomputed-map-tile-image.png" alt="предварительно вычисленное изображение тайла карты" width="500" />
 </div>
 
-We can use a NoSQL database to facilitate the heavy write load we have on location updates. We prioritize availability over consistency as user location data often changes and becomes stale as new updates arrive.
+### **Сервисы**
 
-We'll choose Cassandra as our database choice as it nicely fits all our requirements.
+#### Сервис местоположения
 
-Example row we're going to store:
+Подробно рассмотрим дизайн базы данных и то, как в этом сервисе хранится местоположение пользователя.
 
 <div style="margin-left:3rem">
-    <img src="./images/user-location-row-example.png" alt="user-location-row-example" width="500" />
+    <img src="./images/location-service-diagram.png" alt="схема сервиса местоположения" width="500" />
 </div>
 
- * `user_id` is the partition key in order to quickly access all location updates for a particular user
- * `timestamp` is the clustering key in order to store the data sorted by the time a location update is received
+Для обработки высокой нагрузки на запись от обновлений местоположения можно использовать NoSQL (Not Only SQL — нереляционную) базу данных. Мы ставим доступность выше согласованности, поскольку данные о местоположении пользователя часто меняются и устаревают по мере поступления новых обновлений.
 
-We also leverage Kafka to stream location updates to various other service which need the location updates for various purposes:
+В качестве базы данных выберем Cassandra, так как она хорошо удовлетворяет всем нашим требованиям.
+
+Пример строки, которую будем хранить:
 
 <div style="margin-left:3rem">
-    <img src="./images/location-update-streaming.png" alt="location-update-streaming" width="500" />
+    <img src="./images/user-location-row-example.png" alt="пример строки местоположения пользователя" width="500" />
 </div>
 
-#### Rendering map
+ * `user_id` — ключ партиционирования (partition key), чтобы быстро получать все обновления местоположения конкретного пользователя
+ * `timestamp` — ключ кластеризации (clustering key), чтобы хранить данные отсортированными по времени получения обновления местоположения
 
-Map tiles are stored at various zoom levels. At the lowest zoom level, the entire world is represented by a single 256x256 tile.
-
-As zoom levels increase, the number of map tiles quadruples:
+Мы также используем Kafka для потоковой передачи обновлений местоположения в различные другие сервисы, которым они нужны для разных целей:
 
 <div style="margin-left:3rem">
-    <img src="./images/zoom-level-increases.png" alt="zoom-level-increases" width="500" />
+    <img src="./images/location-update-streaming.png" alt="потоковая передача обновлений местоположения" width="500" />
 </div>
 
-One optimization we can use is to not send the entire image information over the network, but instead represent tiles as vectors (paths & polygons) and let the client render the tiles dynamically.
+#### Отрисовка карты
 
-This will have substantial bandwidth savings.
+Тайлы карты хранятся для разных уровней масштаба. На самом низком уровне масштаба весь мир представлен одним тайлом 256x256.
 
-#### Navigation service
-
-This service is responsible for finding the fastest routes:
+С каждым следующим уровнем масштаба количество тайлов увеличивается в четыре раза:
 
 <div style="margin-left:3rem">
-    <img src="./images/navigation-service.png" alt="navigation-service" width="500" />
+    <img src="./images/zoom-level-increases.png" alt="увеличение уровня масштаба" width="500" />
 </div>
 
-Let's go through each component in this sub-system.
+Одна из возможных оптимизаций — не передавать по сети изображение целиком, а представлять тайлы в виде векторов (пути и полигоны) и позволить клиенту отрисовывать тайлы динамически.
 
-First, we have the geocoding service which resolves an address to a location of lat/long pair.
+Это даст существенную экономию трафика.
 
-Example request:
+#### Сервис навигации
+
+Этот сервис отвечает за поиск самых быстрых маршрутов:
+
+<div style="margin-left:3rem">
+    <img src="./images/navigation-service.png" alt="сервис навигации" width="500" />
+</div>
+
+Разберём каждый компонент этой подсистемы.
+
+Во-первых, есть сервис геокодирования, который преобразует адрес в местоположение — пару широта/долгота.
+
+Пример запроса:
 
 ```
 https://maps.googleapis.com/maps/api/geocode/json?address=1600+Amphitheatre+Parkway,+Mountain+View,+CA
 ```
 
-Example response:
+Пример ответа:
 
 ```json
 {
@@ -375,29 +377,29 @@ Example response:
 }
 ```
 
-The route planner service computes a suggested route, optimized for travel time according to current traffic conditions.
+Сервис планирования маршрутов (route planner) вычисляет предлагаемый маршрут, оптимизированный по времени в пути с учётом текущей дорожной ситуации.
 
-The shortest-path service runs a variation of the A* algorithm against the routing tiles in object storage to compute an optimal path:
- * It receives the source/destination pairs, converts them to lat/long pairs and derives the geohashes from those pairs to derive the routing tiles
- * The algorithm starts from the initial routing tile and starts traversing it until a good enough path is found to the destination tile
+Сервис кратчайшего пути (shortest-path service) выполняет вариацию алгоритма A* на тайлах маршрутизации из объектного хранилища, чтобы вычислить оптимальный путь:
+ * Он получает пары «откуда/куда», преобразует их в пары широта/долгота и вычисляет по ним geohash, чтобы определить нужные тайлы маршрутизации
+ * Алгоритм начинает с исходного тайла маршрутизации и обходит граф, пока не найдёт достаточно хороший путь до тайла назначения
 
 <div style="margin-left:3rem">
-    <img src="./images/shortest-path-service.png" alt="shortest-path-service" width="500" />
+    <img src="./images/shortest-path-service.png" alt="сервис кратчайшего пути" width="500" />
 </div>
 
-The ETA service is called by the route planner to get estimated time based on machine learning algorithms, predicting ETA based on traffic data.
+Сервис ETA вызывается планировщиком маршрутов, чтобы получить оценку времени в пути: алгоритмы машинного обучения прогнозируют ETA на основе данных о дорожной ситуации.
 
-The ranker service is responsible to rank different possible paths based on filters, passed by the user, ie flags to avoid toll roads or freeways.
+Сервис ранжирования (ranker) отвечает за ранжирование возможных маршрутов на основе фильтров, переданных пользователем, т. е. флагов вроде «избегать платных дорог» или «избегать автомагистралей».
 
-The updater service asynchronously update some of the important databases to keep them up-to-date.
+Сервис обновления (updater) асинхронно обновляет ряд важных баз данных, поддерживая их в актуальном состоянии.
 
-#### Improvement - adaptive ETA and rerouting
+#### Улучшение — адаптивный ETA и перестроение маршрута
 
-One improvement we can do is to adaptively update in-flight routes based on newly available traffic data.
+Одно из возможных улучшений — адаптивно обновлять активные маршруты на основе новых данных о дорожной ситуации.
 
-One way to implement this is to store users who are currently navigating through a route in the database by storing all the tiles they're supposed to go through.
+Один из способов реализации — хранить в базе данных пользователей, которые сейчас движутся по маршруту, вместе со всеми тайлами, через которые они должны проехать.
 
-Data might look like this:
+Данные могут выглядеть так:
 
 ```
 user_1: r_1, r_2, r_3, …, r_k
@@ -407,37 +409,37 @@ user_3: r_2, r_8, r_9, …, r_m
 user_n: r_2, r_10, r21, ..., r_l
 ```
 
-If a traffic accident happens on some tile, we can identify all users whose path goes through that tile and re-route them.
+Если на каком-то тайле происходит ДТП (дорожно-транспортное происшествие), можно найти всех пользователей, чей путь проходит через этот тайл, и перестроить им маршрут.
 
-To reduce the amount of tiles we store in the database, we can instead store the origin routing tile and several routing tiles in different resolution levels until the destination tile is also included:
+Чтобы сократить количество тайлов, хранимых в базе данных, можно вместо этого хранить исходный тайл маршрутизации и несколько тайлов маршрутизации разных уровней детализации — до тех пор, пока в очередной из них не войдёт и тайл назначения:
 
 ```
 user_1, r_1, super(r_1), super(super(r_1)), ...
 ```
 
 <div style="margin-left:3rem">
-    <img src="./images/adaptive-eta-data-storage.png" alt="adaptive-eta-data-storage" width="500" />
+    <img src="./images/adaptive-eta-data-storage.png" alt="хранение данных для адаптивного ETA" width="500" />
 </div>
 
-Using this, we only need to check if the final tile of a user includes the traffic accident tile to see if user is impacted.
+Благодаря этому, чтобы понять, затронут ли пользователь, достаточно проверить, включает ли последний тайл пользователя тайл с ДТП.
 
-We can also keep track of all possible routes for a navigating user and notify them if a faster re-route is available.
+Также можно отслеживать все возможные маршруты для пользователя в процессе навигации и уведомлять его, если появился более быстрый альтернативный маршрут.
 
-#### Delivery protocols
+#### Протоколы доставки
 
-We have several options, which enable us to proactively push data to clients from the server:
- * Mobile push notifications don't work because payload is limited and it's not available for web apps
- * WebSocket is generally a better option than long-polling as it has less compute footprint on servers
- * We can also use server-sent events (SSE) but lean towards web sockets as they support bi-directional communication which can come in handy for eg a last-mile delivery feature
+Есть несколько вариантов, позволяющих проактивно отправлять данные с сервера клиентам:
+ * Мобильные push-уведомления не подходят, поскольку размер полезной нагрузки ограничен, и они недоступны для веб-приложений
+ * WebSocket, как правило, лучше long-polling, поскольку создаёт меньшую вычислительную нагрузку на серверы
+ * Можно также использовать server-sent events (SSE — события, отправляемые сервером клиенту по HTTP-соединению), но предпочтительнее WebSocket, поскольку он поддерживает двунаправленную связь, которая может пригодиться, например, для функции доставки «последней мили» (last-mile delivery)
 
 ---
 
-## Step 4: Wrap Up
+## Шаг 4: Подведение итогов
 
-This is our final design:
+Итоговый дизайн:
 
 <div style="margin-left:3rem">
-    <img src="./images/final-design.png" alt="final-design" width="500" />
+    <img src="./images/final-design.png" alt="итоговый дизайн" width="500" />
 </div>
 
-One additional feature we could provide is multi-stop navigation which can be sold to enterprise customers such as Uber or Lyft in order to determine optimal path for visiting a set of locations.
+Одна из дополнительных функций, которую можно предоставить, — навигация с несколькими остановками. Её можно продавать корпоративным клиентам вроде Uber или Lyft для определения оптимального пути при посещении набора точек.

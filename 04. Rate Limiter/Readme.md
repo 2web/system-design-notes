@@ -1,132 +1,134 @@
-# Chapter 4: Design a Rate Limiter
+**Русский** | [English](./Readme.en.md)
 
-## Introduction
-This chapter explores the design and implementation of a rate limiter—a system component used to control traffic rates sent by clients or services. Rate limiters are crucial for preventing abuse, reducing costs, and ensuring the stability of server resources. Examples of their use include limiting posts, account creations, and reward claims.
+# Глава 4. Проектирование ограничителя запросов (Rate Limiter)
 
-## Benefits of Rate Limiting
-- **Preventing DoS Attacks:** Blocking excess calls to avoid resource starvation.
-- **Cost Reduction:** Limiting unnecessary requests to reduce server expenses.
-- **Preventing Overloads:** Filtering out excessive requests to stabilize server performance.
+## Введение
+В этой главе рассматриваются проектирование и реализация ограничителя запросов (rate limiter) — компонента системы, который контролирует частоту запросов, отправляемых клиентами или сервисами. Ограничители запросов крайне важны для предотвращения злоупотреблений, снижения затрат и обеспечения стабильной работы серверных ресурсов. Примеры применения: ограничение количества публикаций, создания аккаунтов и получения бонусов.
 
-## Step 1: Understanding the Problem
-### Key Features
-- Server-side API rate limiter.
-- Support for multiple throttle rules.
-- Handle large-scale systems in distributed environments.
-- Option for a standalone service or application-level code.
-- Inform users when throttled.
+## Преимущества ограничения частоты запросов
+- **Защита от DoS-атак (DoS — Denial of Service, «отказ в обслуживании»):** блокировка избыточных вызовов, чтобы не допустить исчерпания ресурсов.
+- **Снижение затрат:** ограничение лишних запросов снижает расходы на серверы.
+- **Предотвращение перегрузок:** отсеивание избыточных запросов стабилизирует работу серверов.
 
-### Requirements
-- Accurate request throttling.
-- Minimal latency.
-- Low memory usage.
-- Distributed capability.
-- Clear exception handling.
-- High fault tolerance.
+## Шаг 1. Понимание задачи
+### Ключевые функции
+- Ограничитель запросов к API (Application Programming Interface — программный интерфейс приложения) на стороне сервера.
+- Поддержка нескольких правил ограничения (throttling).
+- Работа в крупномасштабных системах в распределённой среде.
+- Возможность реализации как отдельного сервиса или как кода на уровне приложения.
+- Информирование пользователей, когда их запросы ограничены.
 
-## Step 2: High-Level Design
-### Placement Options
+### Требования
+- Точное ограничение запросов.
+- Минимальная задержка.
+- Низкое потребление памяти.
+- Поддержка распределённой работы.
+- Понятная обработка исключений.
+- Высокая отказоустойчивость.
+
+## Шаг 2. Высокоуровневый дизайн
+### Варианты размещения
 <div style="margin-left:2rem">
-    <img src="./images/rate_limiter_architecture.png"  alt="Rate Limiting Middleware Architecture" width="550">
+    <img src="./images/rate_limiter_architecture.png"  alt="Архитектура ограничителя запросов в виде middleware" width="550">
 </div>
 
-1. **Client-Side Implementation:** Unreliable due to potential misuse.
-2. **Server-Side Implementation:** Preferred for control and reliability.
-3. **Middleware (API Gateway):** A flexible option for integrated rate limiting.
+1. **Реализация на стороне клиента:** ненадёжна, так как клиентом можно злоупотребить.
+2. **Реализация на стороне сервера:** предпочтительна с точки зрения контроля и надёжности.
+3. **Middleware (API-шлюз, API gateway):** гибкий вариант со встроенным ограничением частоты запросов.
 
 
-### Guidelines for Placement
-- Evaluate current tech stack and choose efficient options.
-- Select appropriate algorithms based on business needs.
-- Use an API gateway if microservices are employed.
-- Opt for commercial solutions if resources are limited.
+### Рекомендации по размещению
+- Оцените текущий технологический стек и выберите эффективные варианты.
+- Выбирайте подходящие алгоритмы исходя из бизнес-требований.
+- Используйте API-шлюз, если применяются микросервисы.
+- При ограниченных ресурсах выбирайте коммерческие решения.
 
-## Step 3: Rate Limiting Algorithms
-### 1. Token Bucket
+## Шаг 3. Алгоритмы ограничения частоты запросов
+### 1. Token Bucket («корзина токенов»)
 <div style="margin-left:2rem">
-  <img src="./images/token-bucket.png"  alt="Token Bucket Algorithm" width="550">
+  <img src="./images/token-bucket.png"  alt="Алгоритм Token Bucket" width="550">
 </div>
 
-- **Description:** Tokens are added to a bucket at a fixed rate; each request consumes a token.
-- **Parameters:** Bucket size and refill rate.
-- **Pros:** Easy to implement, memory-efficient, supports traffic bursts.
-- **Cons:** Requires careful parameter tuning.
+- **Описание:** токены добавляются в корзину с фиксированной скоростью; каждый запрос расходует один токен.
+- **Параметры:** размер корзины и скорость пополнения.
+- **Плюсы:** прост в реализации, экономно расходует память, допускает всплески трафика.
+- **Минусы:** требует тщательной настройки параметров.
 
 
 
-### 2. Leaking Bucket
+### 2. Leaking Bucket («дырявое ведро»)
 <div style="margin-left:2rem">
-  <img src="./images/leaking-bucket.png"  alt="Leaking Bucket Algorithm" width="550">
+  <img src="./images/leaking-bucket.png"  alt="Алгоритм Leaking Bucket" width="550">
 </div>
 
-- **Description:** Processes requests at a fixed rate using a FIFO queue.
-- **Pros:** Memory-efficient, stable outflow rate.
-- **Cons:** Traffic bursts may delay recent requests.
+- **Описание:** обрабатывает запросы с фиксированной скоростью с помощью очереди FIFO (First In, First Out — «первым пришёл — первым ушёл»).
+- **Плюсы:** экономно расходует память, обеспечивает стабильную скорость исходящего потока.
+- **Минусы:** при всплесках трафика обработка новых запросов может задерживаться.
   
 
-  Example: https://github.com/uber-go/ratelimit
+  Пример: https://github.com/uber-go/ratelimit
 
 
 
-### 3. Fixed Window Counter
+### 3. Fixed Window Counter (счётчик в фиксированном окне)
 <div style="margin-left:2rem">
-  <img src="./images/fixed-window-counter.png"  alt="Fixed Window Counter" width="550">
+  <img src="./images/fixed-window-counter.png"  alt="Счётчик в фиксированном окне" width="550">
 </div>
 
-- **Description:** Divides time into fixed intervals and uses counters to limit requests.
-- **Pros:** Simple, efficient for specific use cases.
-- **Cons:** Traffic spikes at window edges can exceed limits.
+- **Описание:** делит время на фиксированные интервалы и ограничивает запросы с помощью счётчиков.
+- **Плюсы:** простой, эффективен для определённых сценариев.
+- **Минусы:** всплески трафика на границах окон могут приводить к превышению лимитов.
 
-- Sudden burst of traffic at the edges of time windows
-could cause more requests than allowed quota to go through.
+- Резкий всплеск трафика на границах временных окон
+может привести к тому, что будет пропущено больше запросов, чем допускает квота.
 
-  <img src="./images/fixed-window-issue.png"  alt="Fixed Window Issue" width="550">
+  <img src="./images/fixed-window-issue.png"  alt="Проблема фиксированного окна" width="550">
 
 
-### 4. Sliding Window Log
+### 4. Sliding Window Log (журнал скользящего окна)
 <div style="margin-left:2rem">
-  <img src="./images/sliding-window-log.png"  alt="Sliding Window Log" width="550">
+  <img src="./images/sliding-window-log.png"  alt="Журнал скользящего окна" width="550">
 </div>
 
-- **Description:** Tracks timestamps to allow a rolling time window.
-- **Pros:** Accurate rate limiting.
-- **Cons:** High memory consumption.
-  
-
-
-### 5. Sliding Window Counter
-<div style="margin-left:2rem">
-  <img src="./images/sliding-window-counter.png"  alt="Fixed Window Counter" width="550">
-</div>
-
-- **Description:** Combines fixed window and sliding log methods for smoothing spikes.
-- **Pros:** Memory-efficient, handles traffic bursts.
-- **Cons:** Approximation may not be perfectly strict.
+- **Описание:** хранит временные метки запросов, реализуя скользящее временное окно.
+- **Плюсы:** точное ограничение частоты запросов.
+- **Минусы:** высокое потребление памяти.
   
 
 
-
-## High-Level Architecture
+### 5. Sliding Window Counter (счётчик скользящего окна)
 <div style="margin-left:2rem">
-  <img src="./images/architecture.png" style="margin-left: 40px; margin-top: 40px; margin-bottom: 20px;" alt="Architecture" width="550">
+  <img src="./images/sliding-window-counter.png"  alt="Счётчик в фиксированном окне" width="550">
 </div>
 
-- **Data Storage:** Use in-memory caching (e.g., Redis) for fast counter operations.
-- **Steps:**
-  1. Client sends request to middleware.
-  2. Middleware checks counters in Redis.
-  3. Request is processed or rejected based on limits.
+- **Описание:** сочетает методы фиксированного окна и журнала скользящего окна, сглаживая всплески.
+- **Плюсы:** экономно расходует память, справляется со всплесками трафика.
+- **Минусы:** из-за приближённых вычислений ограничение может быть не абсолютно строгим.
+  
 
 
-## Advanced Considerations
-### Distributed Environments
-- **Challenges:** Race conditions, synchronization issues.
-- **Solutions:** Use locks, Lua scripts, or sorted sets in Redis. Employ centralized data stores for synchronization.
 
-### Performance Optimizations
-- Multi-data center setups for reduced latency.
-- Eventual consistency models for synchronization.
+## Высокоуровневая архитектура
+<div style="margin-left:2rem">
+  <img src="./images/architecture.png" style="margin-left: 40px; margin-top: 40px; margin-bottom: 20px;" alt="Архитектура" width="550">
+</div>
 
-### Monitoring
-- Regular analytics to ensure algorithm effectiveness and adjust rules as needed.
+- **Хранение данных:** используйте in-memory кэш (например, Redis) для быстрых операций со счётчиками.
+- **Шаги:**
+  1. Клиент отправляет запрос в middleware.
+  2. Middleware проверяет счётчики в Redis.
+  3. Запрос обрабатывается или отклоняется в зависимости от лимитов.
+
+
+## Дополнительные аспекты
+### Распределённая среда
+- **Проблемы:** состояние гонки (race condition), проблемы синхронизации.
+- **Решения:** используйте блокировки, Lua-скрипты или отсортированные множества (sorted sets) в Redis. Для синхронизации применяйте централизованные хранилища данных.
+
+### Оптимизация производительности
+- Размещение в нескольких дата-центрах для снижения задержки.
+- Модели согласованности в конечном счёте (eventual consistency) для синхронизации.
+
+### Мониторинг
+- Регулярный анализ, чтобы убедиться в эффективности алгоритма и при необходимости скорректировать правила.
 
