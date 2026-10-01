@@ -52,6 +52,7 @@ Check the notes here: https://pagefy.io/system-design/system-design-interview-by
  * [Chapter 38 - Distributed Cache](./38.%20Distributed%20Cache/README.en.md)
  * [Chapter 39 - BitTorrent and Torrent Streaming Player](./39.%20BitTorrent/README.en.md)
  * [Chapter 40 - Multi-Agent System (Agent Swarm)](./40.%20Multi-Agent%20System/README.en.md)
+ * [Chapter 41 - Proxy Server](./41.%20Proxy%20Server/README.en.md)
 
 
 # Additonal Resources
